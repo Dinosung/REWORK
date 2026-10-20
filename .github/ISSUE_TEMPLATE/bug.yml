@@ -1,0 +1,23 @@
+name: Bug
+description: rework crashes, or the output won't open.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and the full error.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `rework --version`, `pandoc --version | head -1` and `python --version`, and your OS.
+    validations:
+      required: true

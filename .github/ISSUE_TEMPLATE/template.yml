@@ -1,0 +1,33 @@
+name: A template rework gets wrong
+description: The output doesn't match the template's house style.
+labels: [template]
+body:
+  - type: markdown
+    attributes:
+      value: Never attach a client's confidential document. A blank copy of the template is enough.
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What came out wrong
+      description: Cover, header or footer, table style, list numbering, fonts... A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: learn
+    attributes:
+      label: Output of `rework learn TEMPLATE.docx`
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: template
+    attributes:
+      label: Template
+      description: Attach the template or a stripped copy if you can share it, or describe where it comes from.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `rework --version` and `pandoc --version | head -1`, and the app you opened the result in.
+    validations:
+      required: true
