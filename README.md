@@ -42,32 +42,40 @@ rework learn client-template.docx > style.json
 
 ```json
 {
-  "body": "ACMEBody",
-  "table": "MediumShading1-Accent1",
-  "table_cell": "ACMETableText",
-  "list": "ListParagraph",
+  "body": "ACME Body",
+  "table": "Medium Shading 1 Accent 1",
+  "table_cell": "ACME Table Text",
+  "list": "List Paragraph",
   "caption": "Caption",
   "body_section": 1,
   "cover": 11,
   "cover_lines": ["ACME ENGINEERING", "[Report title]", "Prepared for [Client]", "[Date]"],
+  "header_lines": ["[Client] | Confidential"],
   "replace": []
 }
 ```
 
-Edit anything it got wrong, then fill the cover's blanks with `replace` pairs (a regular
-expression and its replacement). `{title}`, `{subtitle}`, `{author}` and `{date}` come from the
-Markdown's front matter; anything else comes from `--set`:
+Edit anything it got wrong; styles can be given by name or id. Then fill the placeholders shown in
+`cover_lines` and `header_lines` with `replace` pairs: the exact text to find, and what to put
+there. Values in `{braces}` come from the Markdown's front matter (any plain-text field, such as
+`title`, `date` or your own `client:`) or from `--set`:
 
 ```json
-"replace": [["\\[Report title\\]", "{title}"], ["\\[Client\\]", "{client}"], ["\\[Date\\]", "{date}"]]
+"replace": [["[Report title]", "{title}"], ["[Client]", "{client}"], ["[Date]", "{date}"]]
 ```
 
 ```sh
 rework build report.md -t client-template.docx -s style.json --set client="Springfield County" -o report.docx
 ```
 
+- The text is matched exactly, not as a pattern, and each placeholder keeps its formatting.
+- A cover line replaced by `""` is removed, which is how to drop a template's instructions.
+- A filled-in email address also updates its mailto link.
+- The build stops if a `{value}` is missing and warns about text it didn't find.
+
 Set `"cover": 0` if the template has no cover page. `learn` only copies short covers on its own;
-for a longer one it adds a `cover_note` with the number to use.
+for a longer one it adds a `cover_note` with the number to use. `"figure_caption"` and
+`"table_caption"` override `"caption"` when the template has one style for each.
 
 ## With a coding agent
 

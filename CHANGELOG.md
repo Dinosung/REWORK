@@ -5,6 +5,34 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Found by the first round of customer testing on nine new templates.
+
+### Changed
+
+- `replace` pairs match exact text, not regular expressions. Placeholders such as `[Client Name]`
+  used to be read as patterns and garble the cover. Remove any `\\` escaping from existing pairs.
+- `learn` reports style names ("Body Text") rather than ids ("af1"), and prints non-English text
+  as is. style.json accepts either.
+
+### Added
+
+- Placeholders in headers and footers are filled too; `learn` lists them as `header_lines`.
+- `{values}` come from any plain-text front-matter field, not only title, subtitle, author and date.
+- A cover line replaced by `""` is removed, so template instructions can be dropped.
+- `figure_caption` and `table_caption` keys.
+
+### Fixed
+
+- The abstract is no longer deleted along with pandoc's title block.
+- Filling a placeholder keeps its formatting (underline, italics) and the rest of the paragraph.
+- A value is never re-matched by another pair.
+- A filled-in email address updates its mailto link.
+- The build stops with a clear message when a `{value}` is missing or a `replace` entry is malformed,
+  and warns about text it did not find. Bad paths and `--set` arguments give an error, not a traceback.
+- Headers are listed before footers in the body section, which LibreOffice needs to keep the cover's
+  own header and footer.
+- pandoc's unused headers and footers are removed from the output.
+
 ## [0.1.0] - 2026-10-20
 
 First release.
