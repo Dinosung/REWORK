@@ -5,7 +5,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Found by the first round of customer testing on nine new templates.
+Found by the first round of customer testing on nine templates the tool had never seen.
 
 ### Changed
 
@@ -19,10 +19,18 @@ Found by the first round of customer testing on nine new templates.
 - Placeholders in headers and footers are filled too; `learn` lists them as `header_lines`.
 - `{values}` come from any plain-text front-matter field, not only title, subtitle, author and date.
 - A cover line replaced by `""` is removed, so template instructions can be dropped.
-- `figure_caption` and `table_caption` keys.
+- `figure_caption` and `table_caption` keys; `learn` fills them from the template's Table Caption and
+  Image Caption styles.
+- Captions are numbered as Word fields ("Table 1") when the template numbers its own (`number_captions`).
+- Headings marked `{.unnumbered}` stay out of the template's heading numbering.
+- `cover_choices` lists where a long front matter can be cut.
 
 ### Fixed
 
+- `learn` picks the body section by its chapter headings, and the body and list styles from that
+  section, so a thesis template's abstract or contents section no longer wins.
+- Images are found next to the source when rework runs from another folder.
+- `-o` must name a .docx file.
 - The abstract is no longer deleted along with pandoc's title block.
 - Filling a placeholder keeps its formatting (underline, italics) and the rest of the paragraph.
 - A value is never re-matched by another pair.

@@ -23,16 +23,26 @@ pandoc table less badly, but the cover, header, footer and styles are missing th
 
 ## Use it
 
-Needs [pandoc](https://pandoc.org/installing.html) and Python 3.10+.
+Needs [pandoc](https://pandoc.org/installing.html) (tested with 3.1 and 3.12) and Python 3.10+.
 
 ```sh
-pipx install git+https://github.com/Dinosung/rework     # or: pip install ...
+pipx install git+https://github.com/Dinosung/REWORK
+# or download the wheel from the latest release and: pipx install rework_docx-*.whl
 
 rework build report.md -t client-template.docx -o report.docx
 ```
 
-Point `-t` at the client's template or at any past deliverable that uses it. The template is only
-read, never changed. Anything after `--` is passed to pandoc (for example `-- --toc`).
+The package is `rework-docx`; the command is `rework`. Point `-t` at the client's template (.docx
+or .dotx) or at any past deliverable that uses it. The template is only read, never changed.
+
+Anything after `--` goes to pandoc. Often useful:
+
+- `-- --toc` for a table of contents;
+- `-- --number-sections` when the template's headings are numbered by typing rather than by style;
+- `-- --shift-heading-level-by=1` when the template's sections use Heading 2;
+- `-- --citeproc --bibliography refs.bib` for citations.
+
+If the template numbers its captions ("Table 1", "Figure 1"), rework numbers yours the same way.
 
 ### Check what it learned
 
@@ -99,6 +109,10 @@ folder into your agent's skills directory.
   cell by cell) are not copied.
 - Headings numbered by typing the number, or by numbering set on single paragraphs, are not
   reproduced.
+- List bullets and numbers use pandoc's numbering, not the template's own bullet characters and colours.
+- One header per document body: templates that give each chapter its own section and typed header
+  get the first chapter's header throughout.
+- Caption numbers are plain ("Table 1"), not per chapter ("Table 3-1").
 - `learn` guesses; check its output on a new template, especially `cover`.
 - Tracked changes and comments are out of scope; see [pandoc's `--track-changes`](https://pandoc.org/MANUAL.html#option--track-changes).
 
