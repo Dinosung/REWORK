@@ -34,3 +34,9 @@ For a fix to template handling, add a test that builds a small template showing 
 - CI runs ruff and the tests on Python 3.10 and 3.13 with the latest pandoc.
 
 By contributing you agree that your work is released under the [MIT License](LICENSE).
+
+## Releasing
+
+Bump `version` in `pyproject.toml` and `rework/__init__.py`, move the changelog's Unreleased notes
+under the new version, and push to main. The release workflow tags the commit and publishes a
+GitHub release with the built packages.

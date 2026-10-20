@@ -1,7 +1,10 @@
 name: Release
+# Bump the version in pyproject.toml and add its CHANGELOG.md section; pushing that to main
+# tags the commit and publishes a GitHub release with the built packages.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: [pyproject.toml, .github/workflows/release.yml]
 permissions:
   contents: write
 jobs:
@@ -14,16 +17,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Check the tag matches the package version
-        run: |
-          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          test "v$version" = "$GITHUB_REF_NAME"
-      - run: pip install build && python -m build
-      - name: Release notes from CHANGELOG.md
-        run: |
-          awk -v v="${GITHUB_REF_NAME#v}" '/^## \[/{p = index($0, "[" v "]")} p' CHANGELOG.md | tail -n +2 > notes.md
-          test -s notes.md
-      - name: Create the GitHub release
+      - name: Read the version
+        id: version
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md
+        run: |
+          tag=v$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Release notes from CHANGELOG.md
+        if: steps.version.outputs.new == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          awk -v v="${TAG#v}" '/^## \[/{p = index($0, "[" v "]")} p && !/^\[/' CHANGELOG.md | tail -n +2 > notes.md
+          test -s notes.md
+      - if: steps.version.outputs.new == 'true'
+        run: pip install build && python -m build
+      - name: Tag and publish the release
+        if: steps.version.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md

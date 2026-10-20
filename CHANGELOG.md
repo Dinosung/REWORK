@@ -22,5 +22,5 @@ First release.
   the result.
 - An agent skill (`skill/SKILL.md`) for Claude Code, Codex and similar agents.
 
-[Unreleased]: https://github.com/Dinosung/rework/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Dinosung/rework/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Dinosung/REWORK/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Dinosung/REWORK/releases/tag/v0.1.0
