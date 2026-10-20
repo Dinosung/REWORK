@@ -20,5 +20,11 @@ rework = "rework.cli:main"
 [project.urls]
 Homepage = "https://github.com/Dinosung/rework"
 
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
 [tool.setuptools]
 packages = ["rework"]

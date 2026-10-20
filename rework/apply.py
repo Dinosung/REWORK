@@ -10,7 +10,7 @@ import subprocess
 
 from lxml import etree
 
-from .ooxml import Importer, Package, R_NS, register_content_types, sections, style_names, w
+from .ooxml import R_NS, Importer, Package, register_content_types, sections, style_names, w
 
 TITLE_BLOCK = ("title", "subtitle", "author", "date", "abstract")
 
@@ -79,7 +79,8 @@ def _replace_text(p, pairs, values):
     text = "".join(t.text or "" for t in runs)
     for pattern, replacement in pairs:
         if re.search(pattern, text):
-            text = re.sub(pattern, lambda m: replacement.format_map(_Blank(values)), text, count=1)
+            filled = replacement.format_map(_Blank(values))
+            text = re.sub(pattern, lambda _m, s=filled: s, text, count=1)  # literal, no backslash escapes
             runs[0].text = text
             runs[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
             for t in runs[1:]:
@@ -149,7 +150,8 @@ def _define_missing_styles(out: Package) -> list[str]:
     defaults = etree.fromstring(_pandoc_default_styles())
     default_by_id = {s.get(w("styleId")): s for s in defaults.iter(w("style"))}
     default_names = style_names(defaults)
-    roots = [out.xml(n) for n in ("word/document.xml", "word/footnotes.xml") if n in out.parts]
+    parts = {n: out.xml(n) for n in ("word/document.xml", "word/footnotes.xml") if n in out.parts}
+    roots = list(parts.values())
 
     def defined():
         return set(style_names(styles))
@@ -180,7 +182,7 @@ def _define_missing_styles(out: Package) -> list[str]:
     used = {e.get(w("val")) for r in roots for t in tags for e in r.iter(w(t))}
     for sid in sorted(used):
         resolve(sid)
-    for name, root in zip(("word/document.xml", "word/footnotes.xml"), roots):
+    for name, root in parts.items():
         for t in tags:
             for e in root.iter(w(t)):
                 if e.get(w("val")) in renamed:

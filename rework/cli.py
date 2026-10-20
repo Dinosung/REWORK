@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 from . import __version__
 from .apply import apply
@@ -45,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         print()
         return 0
 
-    style = json.load(open(args.style)) if args.style else None
+    style = json.loads(Path(args.style).read_text()) if args.style else None
     values = dict(item.split("=", 1) for item in args.set)
     missing = build(args.source, args.template, args.output, style, values, args.pandoc_args)
     if missing:
