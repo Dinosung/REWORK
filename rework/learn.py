@@ -38,16 +38,31 @@ def learn(template_path: str) -> dict:
     body = pkg.xml("word/document.xml").find(w("body"))
     default = _default_paragraph_style(styles)
 
+    # The body section is where the chapters are: the one with the most Heading 1 paragraphs
+    # (the earliest on a tie), else the one with the most text. Front matter and appendices
+    # usually have their own sections. Checked against 6 hand-labelled templates.
+    secs = sections(body)
+    chapters = [sum(1 for el in elements for p in el.iter(w("p"))
+                    if names.get(_pstyle(p) or "") == "heading 1" and _text(p).strip())
+                for elements, _ in secs]
+    sizes = [sum(len(_text(el)) for el in elements) for elements, _ in secs]
+    score = chapters if any(chapters) else sizes
+    body_section = max(range(len(secs)), key=lambda i: (score[i], -i)) if secs else 0
+
+    # Styles are counted in the body section, so an abstract or reference list in the front or
+    # back matter isn't mistaken for body text or lists.
+    scope = [el for el in secs[body_section][0]] if secs else list(body)
+    paragraphs = [p for el in scope for p in el.iter(w("p"))]
     in_tables = {p for tbl in body.iter(w("tbl")) for p in tbl.iter(w("p"))}
-    body_chars, cell_styles, list_styles = Counter(), Counter(), Counter()
-    for p in body.iter(w("p")):
+    # Sample tables can sit anywhere, so table cells are counted across the whole template.
+    cell_styles = Counter(_pstyle(p) or default for p in in_tables if _text(p).strip())
+    body_chars, list_styles = Counter(), Counter()
+    for p in paragraphs:
         sid = _pstyle(p) or default
         text = _text(p).strip()
-        if not text:
+        if not text or p in in_tables:
             continue
-        if p in in_tables:
-            cell_styles[sid] += 1
-        elif p.find(f"./{w('pPr')}/{w('numPr')}") is not None and not _is_heading(sid, names):
+        if p.find(f"./{w('pPr')}/{w('numPr')}") is not None and not _is_heading(sid, names):
             list_styles[sid] += 1
         elif not names.get(sid, "").startswith(SKIP_NAMES):
             body_chars[sid] += len(text)
@@ -63,18 +78,8 @@ def learn(template_path: str) -> dict:
         "table_cell": table_text or (cell_styles.most_common(1)[0][0] if cell_styles else None),
         "list": list_styles.most_common(1)[0][0] if list_styles else _by_name(names, "list paragraph"),
         "caption": _by_name(names, "caption"),
+        "body_section": body_section,
     }
-
-    # The body section is where the chapters are: the one with the most Heading 1 paragraphs
-    # (the earliest on a tie), else the one with the most text. Front matter and appendices
-    # usually have their own sections. Checked against 6 hand-labelled templates.
-    secs = sections(body)
-    chapters = [sum(1 for el in elements for p in el.iter(w("p"))
-                    if names.get(_pstyle(p) or "") == "heading 1" and _text(p).strip())
-                for elements, _ in secs]
-    sizes = [sum(len(_text(el)) for el in elements) for elements, _ in secs]
-    score = chapters if any(chapters) else sizes
-    style["body_section"] = max(range(len(secs)), key=lambda i: (score[i], -i)) if secs else 0
 
     elements = list(body)
     candidate = _cover(elements, names)
