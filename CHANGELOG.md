@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-20
+
 Found by the first round of customer testing on nine templates the tool had never seen.
 
 ### Changed
@@ -58,5 +60,6 @@ First release.
   the result.
 - An agent skill (`skill/SKILL.md`) for Claude Code, Codex and similar agents.
 
-[Unreleased]: https://github.com/Dinosung/REWORK/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Dinosung/REWORK/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Dinosung/REWORK/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Dinosung/REWORK/releases/tag/v0.1.0
