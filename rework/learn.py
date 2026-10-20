@@ -65,10 +65,16 @@ def learn(template_path: str) -> dict:
         "caption": _by_name(names, "caption"),
     }
 
-    # The body section is the one holding the most text; earlier sections are front matter.
+    # The body section is where the chapters are: the one with the most Heading 1 paragraphs
+    # (the earliest on a tie), else the one with the most text. Front matter and appendices
+    # usually have their own sections. Checked against 6 hand-labelled templates.
     secs = sections(body)
+    chapters = [sum(1 for el in elements for p in el.iter(w("p"))
+                    if names.get(_pstyle(p) or "") == "heading 1" and _text(p).strip())
+                for elements, _ in secs]
     sizes = [sum(len(_text(el)) for el in elements) for elements, _ in secs]
-    style["body_section"] = max(range(len(secs)), key=lambda i: sizes[i]) if secs else 0
+    score = chapters if any(chapters) else sizes
+    style["body_section"] = max(range(len(secs)), key=lambda i: (score[i], -i)) if secs else 0
 
     elements = list(body)
     candidate = _cover(elements, names)

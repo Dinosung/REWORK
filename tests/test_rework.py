@@ -279,3 +279,17 @@ def test_style_names_work_in_style_json(files):
     style["body"] = "house body"  # a name, any case
     assert build(str(md), str(tpl), str(out), style) == []
     assert "HouseBody" in {p.get(w("val")) for p in read(out, "word/document.xml").iter(w("pStyle"))}
+
+
+def test_body_section_is_where_the_chapters_are(tmp_path):
+    doc = Document()
+    doc.add_paragraph("Cover")
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    doc.add_paragraph("A long abstract. " * 300)  # front matter with more text than the body
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    doc.add_heading("Introduction", level=1)
+    doc.add_paragraph("Short.")
+    doc.add_heading("Methods", level=1)
+    path = tmp_path / "t.docx"
+    doc.save(path)
+    assert learn(str(path))["body_section"] == 2
