@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rework-docx"
+version = "0.1.0"
+description = "Write in Markdown, deliver in your client's Word template: pandoc plus the house style it misses."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = ["lxml"]
+
+[project.optional-dependencies]
+test = ["pytest", "python-docx"]
+
+[project.scripts]
+rework = "rework.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Dinosung/rework"
+
+[tool.setuptools]
+packages = ["rework"]
