@@ -312,3 +312,50 @@ def test_unnumbered_headings_skip_the_template_numbering(files, tmp_path):
     names = {b.get(w("name")) for b in doc.iter(w("bookmarkStart"))}
     anchors = {h.get(w("anchor")) for h in doc.iter(w("hyperlink")) if h.get(w("anchor"))}
     assert anchors and anchors <= names  # the link to the heading still works
+
+
+def test_captions_are_numbered_when_the_template_numbers_them(tmp_path):
+    doc = Document()
+    doc.add_heading("Results", level=1)
+    caption = doc.add_paragraph("Table ")
+    etree.SubElement(caption._p, w("fldSimple"), {w("instr"): " SEQ Table \\* ARABIC "})
+    tpl, md, out = tmp_path / "t.docx", tmp_path / "r.md", tmp_path / "out.docx"
+    doc.save(tpl)
+    md.write_text("| a |\n|---|\n| 1 |\n\nTable: Culverts\n")
+    style = learn(str(tpl))
+    assert style["number_captions"] is True
+    build(str(md), str(tpl), str(out), style, pandoc_args=["--toc"])
+    assert b"SEQ Table" in zipfile.ZipFile(out).read("word/document.xml")
+
+
+def test_images_are_found_next_to_the_source(files, tmp_path, monkeypatch):
+    tpl, _, out = files
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    png = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                        "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")
+    (folder / "pic.png").write_bytes(png)
+    (folder / "r.md").write_text("![A figure](pic.png)\n")
+    monkeypatch.chdir(tmp_path)  # build from another folder
+    build("notes/r.md", str(tpl), str(out))
+    assert any(n.startswith("word/media/") for n in zipfile.ZipFile(out).namelist())
+
+
+def test_output_must_be_docx(files):
+    tpl, md, _ = files
+    with pytest.raises(SystemExit):
+        main(["build", str(md), "-t", str(tpl), "-o", "report.dotx"])
+
+
+def test_long_front_matter_lists_where_it_can_be_cut(tmp_path):
+    doc = Document()
+    doc.add_paragraph("Document Title")
+    doc.add_paragraph("XX Months 20XX")
+    for _ in range(5):
+        doc.add_paragraph("Lorem ipsum " * 10)
+    doc.add_page_break()
+    doc.add_heading("Introduction", level=1)
+    path = tmp_path / "t.docx"
+    doc.save(path)
+    style = learn(str(path))
+    assert style["cover"] == 0 and style["cover_choices"]["2"] == "XX Months 20XX"

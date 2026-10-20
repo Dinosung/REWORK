@@ -78,6 +78,12 @@ def learn(template_path: str) -> dict:
         "table_cell": table_text or (cell_styles.most_common(1)[0][0] if cell_styles else None),
         "list": list_styles.most_common(1)[0][0] if list_styles else _by_name(names, "list paragraph"),
         "caption": _by_name(names, "caption"),
+        # pandoc's own caption style names; a template that defines them has captions styled its way.
+        "table_caption": _by_name(names, "table caption"),
+        "figure_caption": _by_name(names, "image caption") or _by_name(names, "figure caption"),
+        # Templates that number captions do it with SEQ fields; then rework asks pandoc for them too.
+        "number_captions": any("SEQ " in (n.get(w("instr")) or n.text or "")
+                               for n in body.iter(w("fldSimple"), w("instrText"))),
         "body_section": body_section,
     }
 
@@ -86,7 +92,9 @@ def learn(template_path: str) -> dict:
     style["cover"] = candidate if _cover_ok(elements, candidate) else 0
     if candidate and not style["cover"]:
         style["cover_note"] = (f"The first {candidate} elements look like front matter but are too long to be "
-                               f"sure they are a cover. Set \"cover\": {candidate} to copy them.")
+                               f"sure they are a cover. Set \"cover\" to a number from cover_choices to "
+                               f"copy the template up to that line ({candidate} copies all of it).")
+        style["cover_choices"] = _cover_choices(elements[:candidate])
     # Cover fields need judgement (which line is the title, the client, the date), so learn
     # lists the cover's lines; a person or an agent writes `replace` as [regex, "{title}"] pairs.
     style["cover_lines"] = [t for t in (_text(p).strip() for el in elements[:candidate]
@@ -99,6 +107,16 @@ def learn(template_path: str) -> dict:
         if style.get(key):
             style[key] = display.get(style[key]) or style[key]
     return style
+
+
+def _cover_choices(elements, limit: int = 40) -> dict[str, str]:
+    """"cover" value -> the last line it copies, so a long front matter can be cut at a chosen line."""
+    choices = {}
+    for i, el in enumerate(elements, 1):
+        text = _text(el).strip()
+        if text:
+            choices[str(i)] = text[:60]
+    return dict(list(choices.items())[:limit])
 
 
 def _header_lines(pkg: Package, secs) -> list[str]:

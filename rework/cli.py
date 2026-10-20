@@ -31,9 +31,20 @@ def build(source: str, template: str, output: str, style: dict | None = None,
         raw = os.path.join(tmp, "pandoc.docx")
         mark = os.path.join(tmp, "unnumbered.lua")
         Path(mark).write_text(UNNUMBERED_FILTER)
-        subprocess.run(["pandoc", source, "--reference-doc", template, "--lua-filter", mark, "-o", raw,
-                        *(pandoc_args or [])], check=True)
+        args = list(pandoc_args or [])
+        if style.get("number_captions") and not _sets_format(args):
+            args = ["-t", "docx+native_numbering", *args]  # "Table 1", "Figure 1" as Word fields
+        # Images are found next to the source, wherever rework is run from.
+        folder = os.path.dirname(os.path.abspath(source))
+        subprocess.run(["pandoc", source, "--reference-doc", template, "--lua-filter", mark,
+                        "--resource-path", os.pathsep.join([folder, "."]), "-o", raw, *args], check=True)
         return apply(template, raw, style, output, {**front_matter(source, tmp), **(values or {})})
+
+
+def _sets_format(args: list[str]) -> bool:
+    """Whether pandoc arguments choose the output format (-t docx, --to=docx...)."""
+    return any(a.split("=", 1)[0] in ("-t", "--to", "-w", "--write")
+               or (a[:2] in ("-t", "-w") and not a.startswith("--")) for a in args)
 
 
 def front_matter(source: str, tmp: str) -> dict[str, str]:
@@ -68,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         print()
         return 0
 
+    if not args.output.lower().endswith(".docx"):
+        parser.error(f"-o must be a .docx file, got {args.output!r}")
     bad = [item for item in args.set if "=" not in item]
     if bad:
         parser.error(f"--set needs KEY=VALUE, got {bad[0]!r}")
