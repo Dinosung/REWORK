@@ -48,6 +48,7 @@ def apply(template_path: str, pandoc_out: str, style: dict, dst: str, values: di
     cover = _insert_cover(body, tpl_body, style, importer, filler, links)
     _use_body_section(body, tpl_body, style, importer)
     _map_styles(body, style, skip=cover)
+    _unnumber(body)
     out.set_xml("word/document.xml", doc)
     missing = _define_missing_styles(out)
     importer.finish()
@@ -184,6 +185,30 @@ def _use_body_section(body, tpl_body, style, importer):
         body.replace(old, new)
     else:
         body.append(new)
+
+
+UNNUMBERED = "ReworkUnnumbered"  # the character style the CLI's Lua filter puts on such headings
+
+
+def _unnumber(body) -> None:
+    """Headings marked {.unnumbered} in the source skip the template's heading numbering."""
+    for p in body.iter(w("p")):
+        marks = [r for r in p.iter(w("rStyle")) if r.get(w("val")) == UNNUMBERED]
+        if not marks:
+            continue
+        for mark in marks:
+            mark.getparent().remove(mark)
+        ppr = p.find(w("pPr"))
+        if ppr is None:
+            ppr = etree.Element(w("pPr"))
+            p.insert(0, ppr)
+        num = ppr.find(w("numPr"))
+        if num is None:
+            num = etree.Element(w("numPr"))
+            ppr.insert(1 if ppr.find(w("pStyle")) is not None else 0, num)
+        for child in list(num):
+            num.remove(child)
+        etree.SubElement(num, w("numId")).set(w("val"), "0")
 
 
 def _map_styles(body, style, skip: set):

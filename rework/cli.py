@@ -11,6 +11,17 @@ from . import __version__
 from .apply import apply
 from .learn import learn
 
+# pandoc's Word output drops the {.unnumbered} class; mark those headings' text with a character
+# style so rework can turn off the template's heading numbering on them.
+UNNUMBERED_FILTER = """
+function Header(h)
+  if h.classes:includes("unnumbered") then
+    h.content = {pandoc.Span(h.content, {["custom-style"] = "Rework Unnumbered"})}
+  end
+  return h
+end
+"""
+
 
 def build(source: str, template: str, output: str, style: dict | None = None,
           values: dict | None = None, pandoc_args: list[str] | None = None) -> list[str]:
@@ -18,8 +29,10 @@ def build(source: str, template: str, output: str, style: dict | None = None,
     style = style or learn(template)
     with tempfile.TemporaryDirectory() as tmp:
         raw = os.path.join(tmp, "pandoc.docx")
-        subprocess.run(["pandoc", source, "--reference-doc", template, "-o", raw, *(pandoc_args or [])],
-                       check=True)
+        mark = os.path.join(tmp, "unnumbered.lua")
+        Path(mark).write_text(UNNUMBERED_FILTER)
+        subprocess.run(["pandoc", source, "--reference-doc", template, "--lua-filter", mark, "-o", raw,
+                        *(pandoc_args or [])], check=True)
         return apply(template, raw, style, output, {**front_matter(source, tmp), **(values or {})})
 
 

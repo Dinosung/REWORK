@@ -285,11 +285,30 @@ def test_body_section_is_where_the_chapters_are(tmp_path):
     doc = Document()
     doc.add_paragraph("Cover")
     doc.add_section(WD_SECTION.NEW_PAGE)
-    doc.add_paragraph("A long abstract. " * 300)  # front matter with more text than the body
+    doc.styles.add_style("Abstract Text", WD_STYLE_TYPE.PARAGRAPH)
+    doc.add_paragraph("A long abstract. " * 300, style="Abstract Text")  # more text than the body
     doc.add_section(WD_SECTION.NEW_PAGE)
     doc.add_heading("Introduction", level=1)
     doc.add_paragraph("Short.")
     doc.add_heading("Methods", level=1)
     path = tmp_path / "t.docx"
     doc.save(path)
-    assert learn(str(path))["body_section"] == 2
+    style = learn(str(path))
+    assert style["body_section"] == 2
+    assert style["body"] == "Normal"  # not the abstract's style
+
+
+def test_unnumbered_headings_skip_the_template_numbering(files, tmp_path):
+    tpl, _, out = files
+    md = tmp_path / "u.md"
+    md.write_text("# Abstract {.unnumbered}\n\nText.\n\n# Introduction\n\nSee [the abstract](#abstract).\n")
+    build(str(md), str(tpl), str(out))
+    doc = read(out, "word/document.xml")
+    heads = {"".join(t.text or "" for t in p.iter(w("t"))): p for p in doc.iter(w("p"))
+             if p.find(f"{w('pPr')}/{w('pStyle')}") is not None
+             and p.find(f"{w('pPr')}/{w('pStyle')}").get(w("val")).startswith("Heading")}
+    assert heads["Abstract"].find(f"{w('pPr')}/{w('numPr')}/{w('numId')}").get(w("val")) == "0"
+    assert heads["Introduction"].find(f"{w('pPr')}/{w('numPr')}") is None
+    names = {b.get(w("name")) for b in doc.iter(w("bookmarkStart"))}
+    anchors = {h.get(w("anchor")) for h in doc.iter(w("hyperlink")) if h.get(w("anchor"))}
+    assert anchors and anchors <= names  # the link to the heading still works
