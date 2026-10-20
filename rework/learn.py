@@ -1,7 +1,7 @@
 """Work out a template's house style: which of its styles, sections and cover to use."""
 from collections import Counter
 
-from .ooxml import Package, sections, style_names, w
+from .ooxml import R_NS, STYLE_KEYS, Package, sections, style_names, w
 
 SKIP_NAMES = ("heading", "title", "subtitle", "toc", "caption", "list", "header", "footer", "footnote")
 
@@ -80,8 +80,29 @@ def learn(template_path: str) -> dict:
     # lists the cover's lines; a person or an agent writes `replace` as [regex, "{title}"] pairs.
     style["cover_lines"] = [t for t in (_text(p).strip() for el in elements[:candidate]
                                         for p in el.iter(w("p"))) if t]
+    style["header_lines"] = _header_lines(pkg, secs[: style["body_section"] + 1])
     style["replace"] = []
+    # Report display names, which people recognise ("摘要", "Body Text"), rather than ids ("af1").
+    display = style_names(styles, lower=False)
+    for key in STYLE_KEYS:
+        if style.get(key):
+            style[key] = display.get(style[key]) or style[key]
     return style
+
+
+def _header_lines(pkg: Package, secs) -> list[str]:
+    """Text in the headers and footers the body uses, where placeholders also hide."""
+    rels = {r.get("Id"): r.get("Target") for r in pkg.xml("word/_rels/document.xml.rels")}
+    lines = []
+    for _, sect in secs:
+        for ref in sect.iter(w("headerReference"), w("footerReference")):
+            name = "word/" + rels.get(ref.get(f"{{{R_NS}}}id"), "")
+            if name in pkg.parts:
+                for p in pkg.xml(name).iter(w("p")):
+                    text = _text(p).strip()
+                    if text and text not in lines:
+                        lines.append(text)
+    return lines
 
 
 COVER_MAX_CHARS = 400  # a cover is a short page; longer front matter is not copied

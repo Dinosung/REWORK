@@ -38,12 +38,28 @@ class Package:
                 z.writestr(name, data)
 
 
-def style_names(styles: etree._Element) -> dict[str, str]:
-    """styleId -> lower-case display name."""
+def style_names(styles: etree._Element, lower: bool = True) -> dict[str, str]:
+    """styleId -> display name (lower-case unless asked otherwise)."""
     out = {}
     for s in styles.iter(w("style")):
         name = s.find(w("name"))
-        out[s.get(w("styleId"))] = name.get(w("val")).lower() if name is not None else ""
+        value = name.get(w("val")) if name is not None else ""
+        out[s.get(w("styleId"))] = value.lower() if lower else value
+    return out
+
+
+STYLE_KEYS = ("body", "table", "table_cell", "list", "caption", "figure_caption", "table_caption")
+
+
+def resolve_styles(style: dict, styles: etree._Element) -> dict:
+    """Let style.json name styles by their display name ("Body Text") or their id ("BodyText")."""
+    names = style_names(styles)
+    by_name = {name: sid for sid, name in names.items()}
+    out = dict(style)
+    for key in STYLE_KEYS:
+        value = out.get(key)
+        if value and value not in names:
+            out[key] = by_name.get(value.lower(), value)
     return out
 
 
