@@ -1,5 +1,9 @@
 # rework
 
+[![CI](https://github.com/Dinosung/rework/actions/workflows/ci.yml/badge.svg)](https://github.com/Dinosung/rework/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
+
 **Write in Markdown. Deliver in your client's Word template, exactly.**
 
 `pandoc --reference-doc` borrows a template's fonts, but not the rest of its house style: the
@@ -90,6 +94,11 @@ folder into your agent's skills directory.
 - `learn` guesses; check its output on a new template, especially `cover`.
 - Tracked changes and comments are out of scope; see [pandoc's `--track-changes`](https://pandoc.org/MANUAL.html#option--track-changes).
 
+## Contributing
+
+A template `rework` gets wrong is the most useful report: see [CONTRIBUTING.md](CONTRIBUTING.md).
+Changes are listed in the [changelog](CHANGELOG.md).
+
 ## License
 
-MIT
+[MIT](LICENSE)
