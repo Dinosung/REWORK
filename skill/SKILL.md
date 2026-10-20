@@ -13,7 +13,8 @@ Requires `rework` (`pipx install git+https://github.com/Dinosung/rework`) and pa
    rework learn TEMPLATE.docx > style.json
    ```
    Check `cover` and `cover_lines`. If the lines are not a cover page (for example a statement or
-   a table of contents), set `"cover": 0`.
+   a table of contents), set `"cover": 0`. If `cover_note` says a long cover was left out and the
+   lines are a real cover, set `cover` to the number it gives.
 3. If there is a cover, fill its blanks. For each placeholder line in `cover_lines` (such as
    "[Report title]", "Client name", a sample date), add a `replace` pair: a regular expression that
    matches the placeholder and a replacement using `{title}`, `{subtitle}`, `{author}`, `{date}`

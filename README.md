@@ -62,7 +62,8 @@ Markdown's front matter; anything else comes from `--set`:
 rework build report.md -t client-template.docx -s style.json --set client="Springfield County" -o report.docx
 ```
 
-Set `"cover": 0` if the template has no cover page.
+Set `"cover": 0` if the template has no cover page. `learn` only copies short covers on its own;
+for a longer one it adds a `cover_note` with the number to use.
 
 ## With a coding agent
 

@@ -53,10 +53,14 @@ def learn(template_path: str) -> dict:
             body_chars[sid] += len(text)
 
     table_styles = Counter(t.get(w("val")) for t in body.iter(w("tblStyle")))
+    # A dedicated table-text style beats what the template's sample tables happen to use.
+    table_text = next((sid for sid, name in names.items()
+                       if "table" in name and any(k in name for k in ("text", "contents", "body"))
+                       and "head" not in name), None)
     style = {
         "body": body_chars.most_common(1)[0][0] if body_chars else default,
         "table": table_styles.most_common(1)[0][0] if table_styles else None,
-        "table_cell": cell_styles.most_common(1)[0][0] if cell_styles else None,
+        "table_cell": table_text or (cell_styles.most_common(1)[0][0] if cell_styles else None),
         "list": list_styles.most_common(1)[0][0] if list_styles else _by_name(names, "list paragraph"),
         "caption": _by_name(names, "caption"),
     }
@@ -66,28 +70,57 @@ def learn(template_path: str) -> dict:
     sizes = [sum(len(_text(el)) for el in elements) for elements, _ in secs]
     style["body_section"] = max(range(len(secs)), key=lambda i: sizes[i]) if secs else 0
 
-    style["cover"] = _cover(list(body), names)
+    elements = list(body)
+    candidate = _cover(elements, names)
+    style["cover"] = candidate if _cover_ok(elements, candidate) else 0
+    if candidate and not style["cover"]:
+        style["cover_note"] = (f"The first {candidate} elements look like front matter but are too long to be "
+                               f"sure they are a cover. Set \"cover\": {candidate} to copy them.")
     # Cover fields need judgement (which line is the title, the client, the date), so learn
     # lists the cover's lines; a person or an agent writes `replace` as [regex, "{title}"] pairs.
-    style["cover_lines"] = [t for t in (_text(p).strip() for el in list(body)[:style["cover"]]
+    style["cover_lines"] = [t for t in (_text(p).strip() for el in elements[:candidate]
                                         for p in el.iter(w("p"))) if t]
     style["replace"] = []
     return style
 
 
-def _cover(elements: list, names: dict[str, str]) -> int:
-    """Number of leading body elements that form a cover page, or 0 if there is none.
+COVER_MAX_CHARS = 400  # a cover is a short page; longer front matter is not copied
 
-    A cover is everything before the first section or page break, as long as that break
-    comes before the first heading and the part before it has some text.
+
+def _breaks_before(el) -> bool:
+    return (el.find(f".//{w('pageBreakBefore')}") is not None
+            or any(b.get(w("type")) == "page" for b in el.iter(w("br"))))
+
+
+def _is_toc(el) -> bool:
+    gallery = el.find(f".//{w('docPartGallery')}")
+    return el.tag == w("sdt") and gallery is not None and "contents" in (gallery.get(w("val")) or "").lower()
+
+
+def _cover(elements: list, names: dict[str, str]) -> int:
+    """Number of leading body elements that may form a cover page (0 if none).
+
+    The candidate ends at the first page or section break, or just before a table of contents
+    (and its "Contents" title). `_cover_ok` then checks it is short and has some text.
     """
+    end = 0
     for i, el in enumerate(elements):
-        # A cover may use the Title style; a real heading means the body has started.
-        if el.tag == w("p") and names.get(_pstyle(el) or "", "").startswith("heading"):
-            return 0
-        breaks_page = (el.find(f"./{w('pPr')}/{w('sectPr')}") is not None
-                       or any(b.get(w("type")) == "page" for b in el.iter(w("br"))))
-        if breaks_page:
-            has_text = any(_text(e).strip() for e in elements[:i + 1])
-            return i + 1 if has_text else 0
-    return 0
+        if _is_toc(el):
+            end = i
+            if i and "contents" in _text(elements[i - 1]).lower():
+                end = i - 1
+            break
+        if el.find(f"./{w('pPr')}/{w('sectPr')}") is not None:
+            end = i + 1
+            break
+        if _breaks_before(el):
+            # A break inside a heading starts the body on a new page; elsewhere it ends the cover.
+            heading = names.get(_pstyle(el) or "", "").startswith("heading")
+            end = i if heading else i + 1
+            break
+    return end
+
+
+def _cover_ok(elements: list, end: int) -> bool:
+    chars = sum(len(_text(e).strip()) for e in elements[:end])
+    return 0 < chars <= COVER_MAX_CHARS
