@@ -16,8 +16,9 @@ Requires `rework` (`pipx install git+https://github.com/Dinosung/REWORK`, comman
    Look at the template itself too, if you can render pages
    (`soffice --headless --convert-to pdf TEMPLATE.docx && pdftoppm -png -r 50 TEMPLATE.pdf page`).
    Check `cover` and `cover_lines`. If the lines are not a cover page (for example a statement or
-   a table of contents), set `"cover": 0`. If `cover_note` says a long cover was left out and the
-   lines are a real cover, set `cover` to the number it gives.
+   a table of contents), set `"cover": 0`. If `cover_note` says a long front matter was left out,
+   pick from `cover_choices` the number whose line ends the real cover (it maps each `cover` value
+   to the last line it copies), so sample text and instructions are not copied.
 3. Fill the placeholders in `cover_lines` and `header_lines` with `replace` pairs: the exact text
    to find (copied as is, no escaping) and the replacement, for example
    ```json
@@ -27,7 +28,8 @@ Requires `rework` (`pipx install git+https://github.com/Dinosung/REWORK`, comman
    - `{name}` values come from the Markdown front matter (`title`, `date`, or any field such as
      `client:`) or from `--set name=value`.
    - Replacing a line with `""` removes it; use that for template instructions on the cover.
-   - Remove `cover_lines` and `header_lines` from style.json when done; they are only informational.
+   - Remove `cover_lines`, `cover_choices` and `header_lines` from style.json when done; they are
+     only informational.
 4. Build:
    ```sh
    rework build REPORT.md -t TEMPLATE.docx -s style.json [--set client="..."] -o REPORT.docx
