@@ -63,6 +63,42 @@ def sections(body: etree._Element) -> list[tuple[list[etree._Element], etree._El
     return out
 
 
+KNOWN_TYPES = {
+    "ttf": "application/x-font-ttf",
+    "otf": "application/x-font-opentype",
+    "odttf": "application/vnd.openxmlformats-officedocument.obfuscatedFont",
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "gif": "image/gif",
+    "svg": "image/svg+xml",
+    "emf": "image/x-emf",
+    "wmf": "image/x-wmf",
+}
+
+
+def register_content_types(pkg: Package, fallback: Package) -> None:
+    """Give every part a content type. Word reports a file as corrupt when one is missing;
+    pandoc leaves embedded template fonts without one."""
+    types = pkg.xml("[Content_Types].xml")
+    overrides = {o.get("PartName") for o in types if o.tag == f"{{{CT_NS}}}Override"}
+    defaults = {d.get("Extension").lower() for d in types if d.tag == f"{{{CT_NS}}}Default"}
+    known = dict(KNOWN_TYPES)
+    for d in fallback.xml("[Content_Types].xml"):
+        if d.tag == f"{{{CT_NS}}}Default":
+            known[d.get("Extension").lower()] = d.get("ContentType")
+    added = False
+    for name in pkg.parts:
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if name == "[Content_Types].xml" or "/" + name in overrides or ext in defaults or ext not in known:
+            continue
+        types.insert(0, etree.Element(f"{{{CT_NS}}}Default", Extension=ext, ContentType=known[ext]))
+        defaults.add(ext)
+        added = True
+    if added:
+        pkg.set_xml("[Content_Types].xml", types)
+
+
 class Importer:
     """Copies parts referenced from a template into an output package, fixing relationships."""
 

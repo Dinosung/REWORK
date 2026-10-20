@@ -10,7 +10,7 @@ import subprocess
 
 from lxml import etree
 
-from .ooxml import Importer, Package, R_NS, sections, style_names, w
+from .ooxml import Importer, Package, R_NS, register_content_types, sections, style_names, w
 
 TITLE_BLOCK = ("title", "subtitle", "author", "date", "abstract")
 
@@ -35,6 +35,7 @@ def apply(template_path: str, pandoc_out: str, style: dict, dst: str, values: di
     out.set_xml("word/document.xml", doc)
     missing = _define_missing_styles(out)
     importer.finish()
+    register_content_types(out, tpl)
     out.save(dst)
     return missing
 
