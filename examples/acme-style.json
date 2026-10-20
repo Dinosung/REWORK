@@ -1,0 +1,23 @@
+{
+  "body": "ACMEBody",
+  "table": "MediumShading1-Accent1",
+  "table_cell": "ACMETableText",
+  "list": "ListParagraph",
+  "caption": "Caption",
+  "body_section": 1,
+  "cover": 11,
+  "replace": [
+    [
+      "\\[Report title\\]",
+      "{title}"
+    ],
+    [
+      "\\[Client\\]",
+      "{client}"
+    ],
+    [
+      "\\[Date\\]",
+      "{date}"
+    ]
+  ]
+}
