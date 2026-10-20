@@ -10,9 +10,22 @@ import subprocess
 
 from lxml import etree
 
-from .ooxml import R_NS, Importer, Package, register_content_types, sections, style_names, w
+from .fill import Filler
+from .ooxml import (
+    R_NS,
+    Importer,
+    Package,
+    register_content_types,
+    rels_name,
+    resolve_styles,
+    sections,
+    style_names,
+    w,
+)
 
-TITLE_BLOCK = ("title", "subtitle", "author", "date", "abstract")
+TITLE_BLOCK = ("title", "subtitle", "author", "date")  # the cover replaces these; the abstract is content
+EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+HEADER_REL, FOOTER_REL = R_NS + "/header", R_NS + "/footer"
 
 
 def _pstyle(p):
@@ -20,7 +33,7 @@ def _pstyle(p):
 
 
 def apply(template_path: str, pandoc_out: str, style: dict, dst: str, values: dict | None = None) -> list[str]:
-    """Write `dst`. Returns styles still undefined after the fix (ideally none)."""
+    """Write `dst`. Returns warnings for the user (ideally none)."""
     tpl, out = Package(template_path), Package(pandoc_out)
     importer = Importer(tpl, out)
     doc = out.xml("word/document.xml")
@@ -28,16 +41,25 @@ def apply(template_path: str, pandoc_out: str, style: dict, dst: str, values: di
     tpl_body = tpl.xml("word/document.xml").find(w("body"))
 
     names = style_names(out.xml("word/styles.xml"))
+    style = resolve_styles(style, out.xml("word/styles.xml"))
     meta = _take_title_block(body, names) if style.get("cover") else {}
-    cover = _insert_cover(body, tpl_body, style, importer, {**meta, **(values or {})})
+    filler = Filler(style.get("replace", []), {**meta, **(values or {})})
+    links: list = []
+    cover = _insert_cover(body, tpl_body, style, importer, filler, links)
     _use_body_section(body, tpl_body, style, importer)
     _map_styles(body, style, skip=cover)
     out.set_xml("word/document.xml", doc)
     missing = _define_missing_styles(out)
     importer.finish()
+    _fill_headers(out, doc, filler)
+    warnings = _fix_links(out, links)
+    _drop_unused_parts(out, doc)
     register_content_types(out, tpl)
     out.save(dst)
-    return missing
+    warnings += [f"text to replace not found in the cover, header or footer: {t!r}" for t in filler.unused()]
+    if missing:
+        warnings.append(f"styles still undefined: {', '.join(missing)}")
+    return warnings
 
 
 def _take_title_block(body, names) -> dict:
@@ -58,40 +80,79 @@ def _take_title_block(body, names) -> dict:
     return meta
 
 
-def _insert_cover(body, tpl_body, style, importer, values) -> set:
+def _insert_cover(body, tpl_body, style, importer, filler, links) -> set:
     count = style.get("cover") or 0
     if not count:
         return set()
-    cover = [copy.deepcopy(el) for el in list(tpl_body)[:count]]
-    for el in cover:
+    cover = []
+    for el in list(tpl_body)[:count]:
+        el = copy.deepcopy(el)
         importer.remap(el)
-        for p in el.iter(w("p")):
-            _replace_text(p, style.get("replace", []), values)
+        changed = [p for p in el.iter(w("p")) if filler.paragraph(p)]
+        links += [h for p in changed for h in p.iter(w("hyperlink")) if h.get(f"{{{R_NS}}}id")]
+        # A placeholder line replaced by nothing is dropped, not left as an empty line.
+        if el.tag == w("p") and el in changed and not _text(el).strip() and not _has_drawing(el):
+            continue
+        cover.append(el)
     for i, el in enumerate(cover):
         body.insert(i, el)
     return {node for el in cover for node in el.iter()}
 
 
-def _replace_text(p, pairs, values):
-    runs = list(p.iter(w("t")))
-    if not runs:
-        return
-    text = "".join(t.text or "" for t in runs)
-    for pattern, replacement in pairs:
-        if re.search(pattern, text):
-            filled = replacement.format_map(_Blank(values))
-            text = re.sub(pattern, lambda _m, s=filled: s, text, count=1)  # literal, no backslash escapes
-            runs[0].text = text
-            runs[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-            for t in runs[1:]:
-                t.text = ""
+def _text(el) -> str:
+    return "".join(t.text or "" for t in el.iter(w("t")))
 
 
-class _Blank(dict):
-    """format_map helper: unknown {fields} become empty instead of raising."""
+def _has_drawing(el) -> bool:
+    return any(n.tag in (w("drawing"), w("pict"), w("object")) for n in el.iter())
 
-    def __missing__(self, key):
-        return ""
+
+def _fill_headers(out: Package, doc, filler) -> None:
+    """Fill placeholders in the headers and footers the document uses."""
+    rels = {r.get("Id"): r.get("Target") for r in out.xml("word/_rels/document.xml.rels")}
+    for ref in doc.iter(w("headerReference"), w("footerReference")):
+        name = "word/" + rels.get(ref.get(f"{{{R_NS}}}id"), "")
+        if name in out.parts:
+            part = out.xml(name)
+            if [p for p in part.iter(w("p")) if filler.paragraph(p)]:
+                out.set_xml(name, part)
+
+
+def _fix_links(out: Package, links) -> list[str]:
+    """A filled-in email link must point at the new address, not the template author's."""
+    rels = out.xml("word/_rels/document.xml.rels")
+    by_id = {r.get("Id"): r for r in rels}
+    warnings = []
+    for link in links:
+        rel = by_id.get(link.get(f"{{{R_NS}}}id"))
+        if rel is None or rel.get("TargetMode") != "External":
+            continue
+        text = _text(link).strip()
+        if rel.get("Target", "").startswith("mailto:") and EMAIL.fullmatch(text):
+            rel.set("Target", "mailto:" + text)
+        elif text and text not in rel.get("Target", ""):
+            warnings.append(f"the cover link {text!r} still points to {rel.get('Target')}")
+    out.set_xml("word/_rels/document.xml.rels", rels)
+    return warnings
+
+
+def _drop_unused_parts(out: Package, doc) -> None:
+    """Remove pandoc's own headers and footers, which the template's section replaced."""
+    used = {n.get(f"{{{R_NS}}}id") for n in doc.iter() if n.get(f"{{{R_NS}}}id")}
+    rels = out.xml("word/_rels/document.xml.rels")
+    kinds = (HEADER_REL, FOOTER_REL)
+    for rel in list(rels):
+        if rel.get("Type") in kinds and rel.get("Id") not in used:
+            rels.remove(rel)
+            name = "word/" + rel.get("Target")
+            out.parts.pop(name, None)
+            out.parts.pop(rels_name(name), None)
+    out.set_xml("word/_rels/document.xml.rels", rels)
+    types = out.xml("[Content_Types].xml")
+    for o in list(types):
+        if o.get("PartName") and o.get("PartName")[1:] not in out.parts:
+            types.remove(o)
+    out.set_xml("[Content_Types].xml", types)
 
 
 def _use_body_section(body, tpl_body, style, importer):
@@ -110,7 +171,9 @@ def _use_body_section(body, tpl_body, style, importer):
     for ref in list(new):
         if ref.tag in (w("headerReference"), w("footerReference")):
             new.remove(ref)
-    for i, ((tag, kind), rid) in enumerate(sorted(refs.items())):
+    # Headers before footers: LibreOffice misreads a first-page header listed after the footers.
+    order = sorted(refs.items(), key=lambda item: (item[0][0] != w("headerReference"), item[0][1]))
+    for i, ((tag, kind), rid) in enumerate(order):
         el = etree.Element(tag)
         el.set(w("type"), kind)
         el.set(f"{{{R_NS}}}id", rid)
@@ -126,7 +189,8 @@ def _use_body_section(body, tpl_body, style, importer):
 def _map_styles(body, style, skip: set):
     in_tables = {p for tbl in body.iter(w("tbl")) for p in tbl.iter(w("p"))}
     renames = {"FirstParagraph": style.get("body"), "BodyText": style.get("body"),
-               "TableCaption": style.get("caption"), "ImageCaption": style.get("caption")}
+               "TableCaption": style.get("table_caption") or style.get("caption"),
+               "ImageCaption": style.get("figure_caption") or style.get("caption")}
     for p in body.iter(w("p")):
         ps = _pstyle(p)
         if p in skip or ps is None:

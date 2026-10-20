@@ -5,12 +5,15 @@ import pytest
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
+from docx.opc.constants import RELATIONSHIP_TYPE
 from docx.shared import Pt
 from lxml import etree
 
 from rework.cli import build, main
 from rework.learn import learn
-from rework.ooxml import style_names, w
+from rework.ooxml import R_NS, style_names, w
+
+RT_HYPERLINK = RELATIONSHIP_TYPE.HYPERLINK
 
 pytestmark = pytest.mark.skipif(shutil.which("pandoc") is None, reason="needs pandoc")
 
@@ -71,8 +74,8 @@ def files(tmp_path):
 def test_learn_finds_house_style(files):
     tpl, _, _ = files
     style = learn(str(tpl))
-    assert style["body"] == "HouseBody"
-    assert style["table"] == "LightGrid-Accent1"
+    assert style["body"] == "House Body"  # names, not ids
+    assert style["table"] == "Light Grid Accent 1"
     assert style["cover"] == 4  # three lines plus the section break
     assert style["body_section"] == 1
     assert "Report title goes here" in style["cover_lines"]
@@ -157,3 +160,122 @@ def test_long_front_matter_is_only_suggested(tmp_path):
     doc.save(path)
     style = learn(str(path))
     assert style["cover"] == 0 and "cover_note" in style
+
+
+# Customer-test round 1: cover fields, headers, links and front matter.
+
+FIELDS_MD = """---
+title: Network Test
+client: Northwind [Ltd]
+date: 1 Oct 2026
+abstract: Short summary of the work.
+---
+
+# Findings
+
+Body text.
+"""
+
+
+def make_fields_template(path):
+    """Placeholders written the way real templates write them: brackets, angle brackets, split runs."""
+    doc = Document()
+    doc.add_paragraph("Prepared for: [Client Name]")
+    p = doc.add_paragraph("Date: ")
+    p.add_run("[Report ").underline = True
+    p.add_run("Date]").underline = True
+    doc.add_paragraph("Delete this instruction")
+    email = doc.add_paragraph()
+    rid = email.part.relate_to("mailto:author@template.example", RT_HYPERLINK, is_external=True)
+    link = etree.SubElement(email._p, w("hyperlink"), {f"{{{R_NS}}}id": rid})
+    etree.SubElement(etree.SubElement(link, w("r")), w("t")).text = "<EMAIL>"
+    second = doc.add_section(WD_SECTION.NEW_PAGE)
+    second.header.is_linked_to_previous = False
+    second.header.paragraphs[0].text = "<client name> report"
+    second.footer.is_linked_to_previous = False
+    second.footer.paragraphs[0].text = "Confidential"
+    doc.add_heading("Background", level=1)
+    doc.add_paragraph("Body " * 50)
+    doc.save(path)
+
+
+@pytest.fixture
+def fields(tmp_path):
+    tpl, md = tmp_path / "fields.docx", tmp_path / "report.md"
+    make_fields_template(tpl)
+    md.write_text(FIELDS_MD)
+    style = learn(str(tpl))
+    style["cover"] = 5
+    style["replace"] = [["[Client Name]", "{client}"], ["[Report Date]", "{date}"],
+                        ["Delete this instruction", ""], ["<EMAIL>", "{email}"],
+                        ["<client name>", "{client}"]]
+    return tpl, md, tmp_path / "out.docx", style
+
+
+def paragraphs(path, part="word/document.xml"):
+    return ["".join(t.text or "" for t in p.iter(w("t"))) for p in read(path, part).iter(w("p"))]
+
+
+def test_cover_fields_are_plain_text_and_come_from_front_matter(fields):
+    tpl, md, out, style = fields
+    warnings = build(str(md), str(tpl), str(out), style, {"email": "sam@firm.example"})
+    texts = paragraphs(out)
+    # "[Client Name]" is matched literally, and the inserted "[Ltd]" is not matched again.
+    assert texts[0] == "Prepared for: Northwind [Ltd]"
+    assert texts[1] == "Date: 1 Oct 2026"
+    assert "Delete this instruction" not in texts and texts[2] == "sam@firm.example"  # emptied line dropped
+    assert "Short summary of the work." in texts  # the abstract is kept
+    assert warnings == []
+
+
+def test_filling_keeps_the_placeholder_formatting(fields):
+    tpl, md, out, style = fields
+    build(str(md), str(tpl), str(out), style, {"email": "sam@firm.example"})
+    date = list(read(out, "word/document.xml").iter(w("p")))[1]
+    underlined = "".join(r.findtext(w("t")) or "" for r in date.iter(w("r")) if r.find(f".//{w('u')}") is not None)
+    assert underlined == "1 Oct 2026"
+
+
+def test_headers_are_filled_and_email_links_follow_the_text(fields):
+    tpl, md, out, style = fields
+    build(str(md), str(tpl), str(out), style, {"email": "sam@firm.example"})
+    names = zipfile.ZipFile(out).namelist()
+    headers = [n for n in names if "header" in n and n.endswith(".xml") and "_rels" not in n]
+    assert headers and all("<client name>" not in "".join(paragraphs(out, h)) for h in headers)
+    assert any("Northwind [Ltd] report" in paragraphs(out, h) for h in headers)
+    rels = zipfile.ZipFile(out).read("word/_rels/document.xml.rels").decode()
+    assert "mailto:sam@firm.example" in rels and "author@template.example" not in rels
+
+
+def test_headers_come_before_footers_in_the_body_section(fields):
+    tpl, md, out, style = fields
+    build(str(md), str(tpl), str(out), style, {"email": "x@y.example"})
+    sect = read(out, "word/document.xml").find(f"{w('body')}/{w('sectPr')}")
+    tags = [etree.QName(e).localname for e in sect if "Reference" in etree.QName(e).localname]
+    assert tags == sorted(tags, key=lambda t: t != "headerReference")
+
+
+def test_missing_values_and_bad_pairs_are_errors(fields, capsys):
+    tpl, md, out, style = fields
+    with pytest.raises(ValueError, match="--set email="):
+        build(str(md), str(tpl), str(out), style)
+    style["replace"] = [{"pattern": "x", "replacement": "y"}]
+    with pytest.raises(ValueError, match="list of"):
+        build(str(md), str(tpl), str(out), style)
+    with pytest.raises(SystemExit):  # argparse rejects --set without KEY=VALUE
+        main(["build", str(md), "-t", str(tpl), "-o", str(out), "--set", "client"])
+
+
+def test_text_that_is_not_found_is_reported(fields):
+    tpl, md, out, style = fields
+    style["replace"].append(["[Not There]", "x"])
+    warnings = build(str(md), str(tpl), str(out), style, {"email": "x@y.example"})
+    assert any("[Not There]" in warning for warning in warnings)
+
+
+def test_style_names_work_in_style_json(files):
+    tpl, md, out = files
+    style = learn(str(tpl))
+    style["body"] = "house body"  # a name, any case
+    assert build(str(md), str(tpl), str(out), style) == []
+    assert "HouseBody" in {p.get(w("val")) for p in read(out, "word/document.xml").iter(w("pStyle"))}
