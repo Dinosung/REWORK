@@ -83,9 +83,13 @@ rework build report.md -t client-template.docx -s style.json --set client="Sprin
 - A filled-in email address also updates its mailto link.
 - The build stops if a `{value}` is missing and warns about text it didn't find.
 
-Set `"cover": 0` if the template has no cover page. `learn` only copies short covers on its own;
-for a longer one it adds a `cover_note` with the number to use. `"figure_caption"` and
-`"table_caption"` override `"caption"` when the template has one style for each.
+Set `"cover": 0` if the template has no cover page. When the template's front matter runs on (a
+title page, declarations, a copyright page), `learn` adds a `cover_note` and `cover_choices`: each
+number copies the template up to that line, page break or section break. The body always starts on
+a new page after the cover. `"figure_caption"`, `"table_caption"` and `"quote"` name the template's
+styles for those; `heading_note` says when its sections start below Heading 1.
+
+Warnings explain what was left unfilled or changed; add `--strict` to make them fail the build.
 
 ## With a coding agent
 
@@ -113,6 +117,9 @@ folder into your agent's skills directory.
 - One header per document body: templates that give each chapter its own section and typed header
   get the first chapter's header throughout.
 - Caption numbers are plain ("Table 1"), not per chapter ("Table 3-1").
+- Values filled into fixed-size text boxes on a cover can be cut off; check the cover.
+- Front matter can only be copied from the start: pages can't be skipped inside it, and its own
+  page numbering (roman numerals) is not kept.
 - `learn` guesses; check its output on a new template, especially `cover`.
 - Tracked changes and comments are out of scope; see [pandoc's `--track-changes`](https://pandoc.org/MANUAL.html#option--track-changes).
 
