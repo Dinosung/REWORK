@@ -4,6 +4,7 @@ from collections import Counter
 
 from .ooxml import R_NS, STYLE_KEYS, Package, sections, style_names, w
 
+GUIDANCE = ("comment", "instruction", "guidance", "placeholder", "hint", "note to")
 SKIP_NAMES = ("heading", "title", "subtitle", "toc", "caption", "list", "header", "footer", "footnote")
 
 
@@ -16,10 +17,10 @@ FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallbac
 PAGE_NUMBER = re.compile(r"^[\divxlcIVXLC_|\s.-]*$")  # "2", "iv", "_3_": field results, not placeholders
 
 
-def _text(el) -> str:
+def _text(el, tabs: bool = False) -> str:
     """Visible text; Word stores each text box twice (a modern copy and a fallback), count it once."""
-    return "".join(t.text or "" for t in el.iter(w("t"))
-                   if not any(a.tag == FALLBACK for a in t.iterancestors()))
+    return "".join(("\t" if n.tag != w("t") else n.text or "") for n in el.iter(w("t"), w("tab"), w("ptab"))
+                   if (tabs or n.tag == w("t")) and not any(a.tag == FALLBACK for a in n.iterancestors()))
 
 
 def _lines(elements) -> list[str]:
@@ -27,9 +28,12 @@ def _lines(elements) -> list[str]:
     lines = []
     for el in elements:
         for p in el.iter(w("p")):
-            text = _text(p).strip() if p.find(f".//{w('p')}") is None else ""
-            if text and text not in lines:
-                lines.append(text)
+            # Tabs separate fields ("Title<tab>Study<tab>Number"); list each field on its own,
+            # since that is the text a replace pair can match.
+            text = _text(p, tabs=True) if p.find(f".//{w('p')}") is None else ""
+            for part in (t.strip() for t in text.split("\t")):
+                if part and part not in lines:
+                    lines.append(part)
     return lines
 
 
@@ -60,7 +64,9 @@ def learn(template_path: str) -> dict:
     # (the earliest on a tie), else the one with the most text. Front matter and appendices
     # usually have their own sections. Checked against 6 hand-labelled templates.
     secs = sections(body)
-    chapters = [sum(1 for el in elements for p in el.iter(w("p"))
+    # The cover's own big heading ("Report title goes here") is not a chapter.
+    after_cover = set(list(body)[_cover(list(body), names):])
+    chapters = [sum(1 for el in elements if el in after_cover for p in el.iter(w("p"))
                     if names.get(_pstyle(p) or "") == "heading 1" and _text(p).strip())
                 for elements, _ in secs]
     sizes = [sum(len(_text(el)) for el in elements) for elements, _ in secs]
@@ -73,7 +79,9 @@ def learn(template_path: str) -> dict:
     paragraphs = [p for el in scope for p in el.iter(w("p"))]
     in_tables = {p for tbl in body.iter(w("tbl")) for p in tbl.iter(w("p"))}
     # Sample tables can sit anywhere, so table cells are counted across the whole template.
-    cell_styles = Counter(_pstyle(p) or default for p in in_tables if _text(p).strip())
+    # Template guidance ("Comment", "Instructions") fills sample cells but is not the house cell style.
+    cell_styles = Counter(sid for sid in (_pstyle(p) or default for p in in_tables if _text(p).strip())
+                          if not any(k in names.get(sid, "") for k in GUIDANCE))
     body_chars, list_styles = Counter(), Counter()
     for p in paragraphs:
         sid = _pstyle(p) or default
@@ -91,11 +99,12 @@ def learn(template_path: str) -> dict:
         return [t for el in els for t in el.iter(w("tbl")) if len(t.findall(w("tr"))) >= 2]
     tables = data_tables(scope) or data_tables(body)
     table_styles = Counter(t.find(f"{w('tblPr')}/{w('tblStyle')}").get(w("val")) for t in tables
-                           if t.find(f"{w('tblPr')}/{w('tblStyle')}") is not None)
+                           if t.find(f"{w('tblPr')}/{w('tblStyle')}") is not None
+                           and names.get(t.find(f"{w('tblPr')}/{w('tblStyle')}").get(w("val"))) != "normal table")
     # A dedicated table-text style beats what the template's sample tables happen to use.
     table_text = next((sid for sid, name in names.items()
-                       if "table" in name and any(k in name for k in ("text", "contents", "body"))
-                       and "head" not in name), None)
+                       if name == "table" or ("table" in name and any(k in name for k in ("text", "contents", "body"))
+                                              and "head" not in name)), None)
     style = {
         "body": body_chars.most_common(1)[0][0] if body_chars else default,
         "table": table_styles.most_common(1)[0][0] if table_styles else None,
@@ -121,8 +130,9 @@ def learn(template_path: str) -> dict:
     # lists the cover's lines; a person or an agent writes `replace` as [regex, "{title}"] pairs.
     # Front matter often runs past the cover (title page, declarations, copyright): offer every
     # place it can be cut, up to where the body section's text starts.
-    front = sum(len(els) for els, _ in secs[:body_section]) if body_section else _first_heading(elements, names)
-    front = max(front, candidate)
+    section_start = sum(len(els) for els, _ in secs[:body_section])
+    front = max(section_start, _first_heading(elements, names, start=candidate), candidate)
+    style["front_end"] = front
     later = sum(len(_text(e).strip()) for e in elements[style["cover"]:front])
     if style["cover"] and later:
         style["cover_note"] = ("The template's front matter continues after the cover (title page, declarations, "
@@ -132,6 +142,12 @@ def learn(template_path: str) -> dict:
     style["cover_lines"] = _lines(elements[:candidate])
     levels = sorted({int(n[8:]) for n in (names.get(_pstyle(p) or "", "") for el in scope for p in el.iter(w("p")))
                      if re.fullmatch(r"heading [1-9]", n)})
+    numbered_by_hand = [p for el in scope for p in el.iter(w("p"))
+                        if names.get(_pstyle(p) or "", "") == "heading 1"
+                        and p.find(f"{w('pPr')}/{w('numPr')}") is not None]
+    if numbered_by_hand:
+        style["numbering_note"] = ("The template numbers its headings paragraph by paragraph, which is not copied. "
+                                   "Pass -- --number-sections to number yours.")
     if levels and levels[0] > 1:
         style["heading_note"] = (f"The template's sections start at Heading {levels[0]}. Pass "
                                  f"-- --shift-heading-level-by={levels[0] - 1} so that # headings use it.")
@@ -150,7 +166,9 @@ def _cover_choices(elements, limit: int = 60) -> dict[str, str]:
     choices = {}
     for i, el in enumerate(elements, 1):
         text = _text(el).strip()
-        if el.find(f".//{w('sectPr')}") is not None:
+        if is_toc(el):
+            choices[str(i)] = "[sample table of contents: don't copy, use -- --toc]"
+        elif el.find(f".//{w('sectPr')}") is not None:
             choices[str(i)] = (text[:40] + " " if text else "") + "[section break]"
         elif any(b.get(w("type")) == "page" for b in el.iter(w("br"))):
             choices[str(i)] = (text[:40] + " " if text else "") + "[page break]"
@@ -159,8 +177,8 @@ def _cover_choices(elements, limit: int = 60) -> dict[str, str]:
     return dict(list(choices.items())[:limit])
 
 
-def _first_heading(elements, names) -> int:
-    return next((i for i, el in enumerate(elements) if names.get(_pstyle(el) or "", "") == "heading 1"
+def _first_heading(elements, names, start: int = 0) -> int:
+    return next((i for i, el in enumerate(elements) if i >= start and names.get(_pstyle(el) or "", "") == "heading 1"
                  and _text(el).strip()), len(elements))
 
 
@@ -200,7 +218,7 @@ def _breaks_before(el) -> bool:
             or any(b.get(w("type")) == "page" for b in el.iter(w("br"))))
 
 
-def _is_toc(el) -> bool:
+def is_toc(el) -> bool:
     gallery = el.find(f".//{w('docPartGallery')}")
     return el.tag == w("sdt") and gallery is not None and "contents" in (gallery.get(w("val")) or "").lower()
 
@@ -213,7 +231,7 @@ def _cover(elements: list, names: dict[str, str]) -> int:
     """
     end = 0
     for i, el in enumerate(elements):
-        if _is_toc(el):
+        if is_toc(el):
             end = i
             if i and "contents" in _text(elements[i - 1]).lower():
                 end = i - 1
