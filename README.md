@@ -13,7 +13,7 @@ style is ignored, and pandoc points paragraphs at styles the template doesn't ha
 real company and university templates we tested, at least two of those broke.
 
 `rework` reads the template, works out its house style, and fixes the pandoc output to match.
-It has been tested against 25 real report and thesis templates, and is honest about where it stops:
+It has been tested against 29 real report and thesis templates, and is honest about where it stops:
 formatting a template applies by hand rather than through styles isn't copied (see [Limits](#limits)).
 
 ![The same Markdown report built with plain pandoc (left) and with rework (right) against one
@@ -92,7 +92,9 @@ number copies the template up to that line, page break or section break. The bod
 a new page after the cover. `"figure_caption"`, `"table_caption"` and `"quote"` name the template's
 styles for those; `heading_note` says when its sections start below Heading 1.
 
-Warnings explain what was left unfilled or changed; add `--strict` to make them fail the build.
+Warnings explain what was left unfilled, changed or not carried over (front matter after the
+cover, a contents page, a table look applied by hand, a heading level the template lacks); add
+`--strict` to make them fail the build.
 
 ## With a coding agent
 
@@ -120,7 +122,10 @@ folder into your agent's skills directory.
 - One header per document body: templates that give each chapter its own section and typed header
   get the first chapter's header throughout.
 - Caption numbers are plain ("Table 1"), not per chapter ("Table 3-1").
-- Values filled into fixed-size text boxes on a cover can be cut off; check the cover.
+- Values filled into fixed-size text boxes on a cover can be cut off, and longer values can push a
+  cover onto a second page; check the cover.
+- A filled-in value keeps the placeholder's formatting (grey italic, if that is how the template
+  marks placeholders).
 - Front matter can only be copied from the start: pages can't be skipped inside it, and its own
   page numbering (roman numerals) is not kept.
 - `learn` guesses; check its output on a new template, especially `cover`.
