@@ -1,17 +1,19 @@
+import json
 import shutil
 import zipfile
+from pathlib import Path
 
 import pytest
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
 from docx.opc.constants import RELATIONSHIP_TYPE
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 from lxml import etree
 
 from rework.cli import build, main
 from rework.learn import learn
-from rework.ooxml import R_NS, style_names, w
+from rework.ooxml import R_NS, W_NS, resolve_styles, style_names, w
 
 RT_HYPERLINK = RELATIONSHIP_TYPE.HYPERLINK
 
@@ -359,3 +361,109 @@ def test_long_front_matter_lists_where_it_can_be_cut(tmp_path):
     doc.save(path)
     style = learn(str(path))
     assert style["cover"] == 0 and style["cover_choices"]["2"] == "XX Months 20XX"
+
+
+# Customer-test round 2.
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
+
+
+def test_the_readme_example_builds_without_warnings(tmp_path):
+    style = json.loads((EXAMPLES / "acme-style.json").read_text())
+    out = tmp_path / "acme.docx"
+    warnings = build(str(EXAMPLES / "report.md"), str(EXAMPLES / "acme-template.docx"), str(out), style,
+                     {"client": "Springfield County"})
+    assert warnings == []
+    assert "Prepared for Springfield County" in paragraphs(out)
+
+
+def test_a_style_name_wins_over_another_styles_id():
+    styles = etree.fromstring(
+        f'<w:styles xmlns:w="{W_NS}">'
+        '<w:style w:type="table" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style>'
+        '<w:style w:type="table" w:styleId="TableNormal0"><w:name w:val="TableNormal"/></w:style>'
+        "</w:styles>")
+    assert resolve_styles({"table": "TableNormal"}, styles)["table"] == "TableNormal0"
+
+
+def test_the_body_starts_on_a_new_page_after_the_cover(files):
+    tpl, md, out = files
+    style = learn(str(tpl))
+    style["cover"] = 3  # the three cover lines, without the section break that ends the page
+    build(str(md), str(tpl), str(out), style)
+    fourth = list(read(out, "word/document.xml").find(w("body")))[3]
+    assert any(b.get(w("type")) == "page" for b in fourth.iter(w("br")))
+
+
+def test_contents_heading_is_never_numbered(files):
+    tpl, md, out = files
+    build(str(md), str(tpl), str(out), pandoc_args=["--toc"])
+    toc = [s for s in read(out, "word/styles.xml").iter(w("style")) if s.get(w("styleId")) == "TOCHeading"]
+    assert toc and toc[0].find(f"{w('pPr')}/{w('numPr')}/{w('numId')}").get(w("val")) == "0"
+
+
+def test_white_body_text_is_made_visible(tmp_path):
+    doc = Document()
+    doc.styles["Normal"].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)  # meant for a dark cover
+    doc.add_heading("Section", level=1)
+    doc.add_paragraph("Body " * 20)
+    tpl, md, out = tmp_path / "t.docx", tmp_path / "r.md", tmp_path / "out.docx"
+    doc.save(tpl)
+    md.write_text("Plain text.\n")
+    style = learn(str(tpl))
+    style["body"] = "Normal"
+    warnings = build(str(md), str(tpl), str(out), style)
+    assert any("white" in warning for warning in warnings)
+    colours = {c.get(w("val")) for c in read(out, "word/document.xml").iter(w("color"))}
+    assert "auto" in colours
+
+
+def test_links_are_kept_unless_a_replacement_covers_them(fields):
+    tpl, md, out, style = fields
+    warnings = build(str(md), str(tpl), str(out), style, {"email": "sam@firm.example"})
+    assert not any("link" in warning for warning in warnings)  # a correct link raises nothing
+    style["replace"] = [["Date: [Report Date]", "x"], ["<EMAIL>", ""]]
+    warnings = build(str(md), str(tpl), str(out), style)
+    assert any("link on '<EMAIL>' was removed" in warning for warning in warnings)
+
+
+def test_captions_quotes_and_strict(tmp_path, capsys):
+    doc = Document()
+    doc.styles.add_style("Table or chart caption", WD_STYLE_TYPE.PARAGRAPH)
+    doc.add_heading("Results", level=1)
+    doc.add_paragraph("Table 1: sample", style="Table or chart caption")
+    doc.add_paragraph("A quote.", style="Quote")
+    tpl, md, out = tmp_path / "t.docx", tmp_path / "r.md", tmp_path / "out.docx"
+    doc.save(tpl)
+    md.write_text("| a |\n|---|\n| 1 |\n\nTable: Culverts\n\n> Quoted.\n")
+    style = learn(str(tpl))
+    assert style["table_caption"] == "Table or chart caption" and style["quote"] == "Quote"
+    build(str(md), str(tpl), str(out), style)
+    doc_xml = read(out, "word/document.xml")
+    caption = next(p for p in doc_xml.iter(w("p")) if "Culverts" in "".join(t.text or "" for t in p.iter(w("t"))))
+    assert caption.find(f"{w('pPr')}/{w('keepNext')}") is not None
+    assert "Quote" in {p.get(w("val")) for p in doc_xml.iter(w("pStyle"))}
+    style["replace"] = [["not in the template", "x"]]
+    (tmp_path / "s.json").write_text(json.dumps(style))
+    assert main(["build", str(md), "-t", str(tpl), "-s", str(tmp_path / "s.json"), "-o", str(out), "--strict"]) == 1
+
+
+def test_learn_explains_bad_inputs(tmp_path, capsys):
+    (tmp_path / "x.pdf").write_bytes(b"%PDF-1.4")
+    assert main(["learn", str(tmp_path / "x.pdf")]) == 1
+    assert "not a Word file" in capsys.readouterr().err
+    assert main(["learn", str(tmp_path / "missing.docx")]) == 1
+
+
+def test_cover_choices_show_breaks(tmp_path):
+    doc = Document()
+    doc.add_paragraph("Report title")
+    doc.add_paragraph("Legal text " * 60)
+    doc.add_page_break()
+    doc.add_paragraph("Copyright 2026")
+    doc.add_page_break()
+    doc.add_heading("Introduction", level=1)
+    path = tmp_path / "t.docx"
+    doc.save(path)
+    choices = learn(str(path))["cover_choices"]
+    assert "[page break]" in choices["3"] and choices["4"] == "Copyright 2026"

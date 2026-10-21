@@ -13,6 +13,7 @@ from lxml import etree
 from .fill import Filler
 from .ooxml import (
     R_NS,
+    W_NS,
     Importer,
     Package,
     register_content_types,
@@ -49,15 +50,23 @@ def apply(template_path: str, pandoc_out: str, style: dict, dst: str, values: di
     _use_body_section(body, tpl_body, style, importer)
     _map_styles(body, style, skip=cover)
     _unnumber(body)
-    out.set_xml("word/document.xml", doc)
     missing = _define_missing_styles(out)
+    styles = out.xml("word/styles.xml")
+    _never_number(styles, ("TOCHeading", "AbstractTitle"))
+    out.set_xml("word/styles.xml", styles)
+    warnings = _visible_body(body, styles, skip=cover)
+    out.set_xml("word/document.xml", doc)
     importer.finish()
     _fill_headers(out, doc, filler)
-    warnings = _fix_links(out, links)
+    warnings += _fix_links(out, links)
     _drop_unused_parts(out, doc)
     register_content_types(out, tpl)
     out.save(dst)
-    warnings += [f"text to replace not found in the cover, header or footer: {t!r}" for t in filler.unused()]
+    template_text = _text(tpl_body)
+    for t in filler.unused():
+        where = (f"it is in the template but outside the copied cover (\"cover\": {style.get('cover') or 0}); "
+                 "raise cover to include it" if t in template_text else "not found in the cover, header or footer")
+        warnings.append(f"text to replace {t!r}: {where}")
     if missing:
         warnings.append(f"styles still undefined: {', '.join(missing)}")
     return warnings
@@ -89,15 +98,88 @@ def _insert_cover(body, tpl_body, style, importer, filler, links) -> set:
     for el in list(tpl_body)[:count]:
         el = copy.deepcopy(el)
         importer.remap(el)
+        before = {h: _text(h) for h in el.iter(w("hyperlink")) if h.get(f"{{{R_NS}}}id")}
         changed = [p for p in el.iter(w("p")) if filler.paragraph(p)]
-        links += [h for p in changed for h in p.iter(w("hyperlink")) if h.get(f"{{{R_NS}}}id")]
+        links += [(h, text) for h, text in before.items() if _text(h) != text]
         # A placeholder line replaced by nothing is dropped, not left as an empty line.
         if el.tag == w("p") and el in changed and not _text(el).strip() and not _has_drawing(el):
             continue
         cover.append(el)
+    # The body starts on a new page even when the template's page break came after the copied part.
+    if cover and not _ends_page(cover[-1]):
+        cover.append(etree.fromstring(f'<w:p xmlns:w="{W_NS}"><w:r><w:br w:type="page"/></w:r></w:p>'))
     for i, el in enumerate(cover):
         body.insert(i, el)
     return {node for el in cover for node in el.iter()}
+
+
+def _ends_page(el) -> bool:
+    return (el.find(f".//{w('sectPr')}") is not None
+            or any(b.get(w("type")) == "page" for b in el.iter(w("br"))))
+
+
+def _never_number(styles, ids) -> None:
+    """pandoc's contents and abstract headings are based on Heading 1; keep them out of its numbering."""
+    for s in styles.iter(w("style")):
+        if s.get(w("styleId")) in ids:
+            ppr = s.find(w("pPr"))
+            if ppr is None:
+                ppr = etree.SubElement(s, w("pPr"))
+            if ppr.find(w("numPr")) is None:
+                num = etree.Element(w("numPr"))
+                etree.SubElement(num, w("numId")).set(w("val"), "0")
+                # Schema order: numPr follows these, if present.
+                before = [c for c in ppr if etree.QName(c).localname in NUMPR_AFTER]
+                ppr.insert(ppr.index(before[-1]) + 1 if before else 0, num)
+
+
+NUMPR_AFTER = ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl")
+COLOR_AFTER = ("rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "outline",
+               "shadow", "emboss", "imprint", "noProof", "snapToGrid", "vanish", "webHidden")
+WHITE = {"FFFFFF", "WHITE"}
+
+
+def _visible_body(body, styles, skip: set) -> list[str]:
+    """Some templates make a base style white for a dark cover and recolour body text by hand.
+
+    Give runs in white-styled body paragraphs automatic colour, as the template's own pages do.
+    """
+    by_id = {s.get(w("styleId")): s for s in styles.iter(w("style"))}
+    default = next((s.get(w("styleId")) for s in styles.iter(w("style"))
+                    if s.get(w("type")) == "paragraph" and s.get(w("default")) in ("1", "true")), None)
+
+    def color(sid, seen=()):
+        s = by_id.get(sid)
+        if s is None or sid in seen:
+            return None
+        c = s.find(f"{w('rPr')}/{w('color')}")
+        if c is not None:
+            return (c.get(w("val")) or "").upper()
+        based = s.find(w("basedOn"))
+        return color(based.get(w("val")), (*seen, sid)) if based is not None else None
+
+    fixed = set()
+    for p in body.iter(w("p")):
+        if p in skip:
+            continue
+        ps = _pstyle(p)
+        sid = ps.get(w("val")) if ps is not None else default
+        if color(sid) not in WHITE:
+            continue
+        for r in p.iter(w("r")):
+            rpr = r.find(w("rPr"))
+            if rpr is None:
+                rpr = etree.Element(w("rPr"))
+                r.insert(0, rpr)
+            run_style = rpr.find(w("rStyle"))
+            if rpr.find(w("color")) is None and (run_style is None or color(run_style.get(w("val"))) is None):
+                auto = etree.Element(w("color"))
+                auto.set(w("val"), "auto")
+                before = [c for c in rpr if etree.QName(c).localname in COLOR_AFTER]
+                rpr.insert(rpr.index(before[-1]) + 1 if before else 0, auto)
+        fixed.add(sid)
+    return [f"the template's {', '.join(sorted(fixed))} style is white text (probably for a dark cover); "
+            "body text was given automatic colour, as on the template's own pages"] if fixed else []
 
 
 def _text(el) -> str:
@@ -120,19 +202,24 @@ def _fill_headers(out: Package, doc, filler) -> None:
 
 
 def _fix_links(out: Package, links) -> list[str]:
-    """A filled-in email link must point at the new address, not the template author's."""
+    """Cover links whose text was filled in: a new email address gets a matching mailto target."""
     rels = out.xml("word/_rels/document.xml.rels")
     by_id = {r.get("Id"): r for r in rels}
     warnings = []
-    for link in links:
+    for link, before in links:
         rel = by_id.get(link.get(f"{{{R_NS}}}id"))
-        if rel is None or rel.get("TargetMode") != "External":
-            continue
         text = _text(link).strip()
-        if rel.get("Target", "").startswith("mailto:") and EMAIL.fullmatch(text):
+        if not text:
+            link.getparent().remove(link)
+            warnings.append(f"the link on {before!r} was removed because a replacement covered its text; "
+                            "replace only the text outside the link")
+        elif rel is None or rel.get("TargetMode") != "External":
+            continue
+        elif rel.get("Target", "").startswith("mailto:") and EMAIL.fullmatch(text):
             rel.set("Target", "mailto:" + text)
-        elif text and text not in rel.get("Target", ""):
-            warnings.append(f"the cover link {text!r} still points to {rel.get('Target')}")
+        else:
+            warnings.append(f"the cover link now reads {text!r} but still points to {rel.get('Target')}; "
+                            "use one replace pair per email address, or edit the link")
     out.set_xml("word/_rels/document.xml.rels", rels)
     return warnings
 
@@ -179,6 +266,10 @@ def _use_body_section(body, tpl_body, style, importer):
         el.set(w("type"), kind)
         el.set(f"{{{R_NS}}}id", rid)
         new.insert(i, el)
+    # A past deliverable may restart page numbers mid-thesis ("start at 26"); start at 1 instead.
+    pg = new.find(w("pgNumType"))
+    if pg is not None and pg.get(w("start")) not in (None, "0", "1"):
+        del pg.attrib[w("start")]
     importer.remap(new)
     old = body.find(w("sectPr"))
     if old is not None:
@@ -214,6 +305,7 @@ def _unnumber(body) -> None:
 def _map_styles(body, style, skip: set):
     in_tables = {p for tbl in body.iter(w("tbl")) for p in tbl.iter(w("p"))}
     renames = {"FirstParagraph": style.get("body"), "BodyText": style.get("body"),
+               "BlockText": style.get("quote"),
                "TableCaption": style.get("table_caption") or style.get("caption"),
                "ImageCaption": style.get("figure_caption") or style.get("caption")}
     for p in body.iter(w("p")):
@@ -227,6 +319,8 @@ def _map_styles(body, style, skip: set):
             ps.set(w("val"), style["list"])
         elif renames.get(sid):
             ps.set(w("val"), renames[sid])
+        if sid == "TableCaption" and ps.getparent().find(w("keepNext")) is None:
+            ps.addnext(etree.Element(w("keepNext")))  # keep a table's caption on the table's page
     if style.get("table"):
         for t in body.iter(w("tblStyle")):
             if t not in skip:
