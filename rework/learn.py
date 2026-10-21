@@ -1,4 +1,5 @@
 """Work out a template's house style: which of its styles, sections and cover to use."""
+import re
 from collections import Counter
 
 from .ooxml import R_NS, STYLE_KEYS, Package, sections, style_names, w
@@ -11,8 +12,25 @@ def _pstyle(p) -> str | None:
     return ps.get(w("val")) if ps is not None else None
 
 
+FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+PAGE_NUMBER = re.compile(r"^[\divxlcIVXLC_|\s.-]*$")  # "2", "iv", "_3_": field results, not placeholders
+
+
 def _text(el) -> str:
-    return "".join(t.text or "" for t in el.iter(w("t")))
+    """Visible text; Word stores each text box twice (a modern copy and a fallback), count it once."""
+    return "".join(t.text or "" for t in el.iter(w("t"))
+                   if not any(a.tag == FALLBACK for a in t.iterancestors()))
+
+
+def _lines(elements) -> list[str]:
+    """One entry per innermost paragraph, so text boxes aren't glued onto the paragraph holding them."""
+    lines = []
+    for el in elements:
+        for p in el.iter(w("p")):
+            text = _text(p).strip() if p.find(f".//{w('p')}") is None else ""
+            if text and text not in lines:
+                lines.append(text)
+    return lines
 
 
 def _default_paragraph_style(styles) -> str:
@@ -67,7 +85,13 @@ def learn(template_path: str) -> dict:
         elif not names.get(sid, "").startswith(SKIP_NAMES):
             body_chars[sid] += len(text)
 
-    table_styles = Counter(t.get(w("val")) for t in body.iter(w("tblStyle")))
+    # Data tables, not layout ones (a one-row table placing an equation number, a borderless glossary
+    # in the front matter): count tables with 2+ rows, in the body section when it has any.
+    def data_tables(els):
+        return [t for el in els for t in el.iter(w("tbl")) if len(t.findall(w("tr"))) >= 2]
+    tables = data_tables(scope) or data_tables(body)
+    table_styles = Counter(t.find(f"{w('tblPr')}/{w('tblStyle')}").get(w("val")) for t in tables
+                           if t.find(f"{w('tblPr')}/{w('tblStyle')}") is not None)
     # A dedicated table-text style beats what the template's sample tables happen to use.
     table_text = next((sid for sid, name in names.items()
                        if "table" in name and any(k in name for k in ("text", "contents", "body"))
@@ -77,10 +101,8 @@ def learn(template_path: str) -> dict:
         "table": table_styles.most_common(1)[0][0] if table_styles else None,
         "table_cell": table_text or (cell_styles.most_common(1)[0][0] if cell_styles else None),
         "list": list_styles.most_common(1)[0][0] if list_styles else _by_name(names, "list paragraph"),
-        "caption": _by_name(names, "caption"),
-        # pandoc's own caption style names; a template that defines them has captions styled its way.
-        "table_caption": _by_name(names, "table caption"),
-        "figure_caption": _by_name(names, "image caption") or _by_name(names, "figure caption"),
+        **_captions(names, body),
+        "quote": _by_name(names, "quote") or _by_name(names, "block text"),
         # Templates that number captions do it with SEQ fields; then rework asks pandoc for them too.
         "number_captions": any("SEQ " in (n.get(w("instr")) or n.text or "")
                                for n in body.iter(w("fldSimple"), w("instrText"))),
@@ -97,8 +119,22 @@ def learn(template_path: str) -> dict:
         style["cover_choices"] = _cover_choices(elements[:candidate])
     # Cover fields need judgement (which line is the title, the client, the date), so learn
     # lists the cover's lines; a person or an agent writes `replace` as [regex, "{title}"] pairs.
-    style["cover_lines"] = [t for t in (_text(p).strip() for el in elements[:candidate]
-                                        for p in el.iter(w("p"))) if t]
+    # Front matter often runs past the cover (title page, declarations, copyright): offer every
+    # place it can be cut, up to where the body section's text starts.
+    front = sum(len(els) for els, _ in secs[:body_section]) if body_section else _first_heading(elements, names)
+    front = max(front, candidate)
+    later = sum(len(_text(e).strip()) for e in elements[style["cover"]:front])
+    if style["cover"] and later:
+        style["cover_note"] = ("The template's front matter continues after the cover (title page, declarations, "
+                               "contents...). To copy more of it, set \"cover\" to a number from cover_choices.")
+    if "cover_note" in style:
+        style["cover_choices"] = _cover_choices(elements[:front])
+    style["cover_lines"] = _lines(elements[:candidate])
+    levels = sorted({int(n[8:]) for n in (names.get(_pstyle(p) or "", "") for el in scope for p in el.iter(w("p")))
+                     if re.fullmatch(r"heading [1-9]", n)})
+    if levels and levels[0] > 1:
+        style["heading_note"] = (f"The template's sections start at Heading {levels[0]}. Pass "
+                                 f"-- --shift-heading-level-by={levels[0] - 1} so that # headings use it.")
     style["header_lines"] = _header_lines(pkg, secs[: style["body_section"] + 1])
     style["replace"] = []
     # Report display names, which people recognise ("摘要", "Body Text"), rather than ids ("af1").
@@ -109,14 +145,39 @@ def learn(template_path: str) -> dict:
     return style
 
 
-def _cover_choices(elements, limit: int = 40) -> dict[str, str]:
-    """"cover" value -> the last line it copies, so a long front matter can be cut at a chosen line."""
+def _cover_choices(elements, limit: int = 60) -> dict[str, str]:
+    """"cover" value -> the last thing it copies, so front matter can be cut at a chosen line or break."""
     choices = {}
     for i, el in enumerate(elements, 1):
         text = _text(el).strip()
-        if text:
+        if el.find(f".//{w('sectPr')}") is not None:
+            choices[str(i)] = (text[:40] + " " if text else "") + "[section break]"
+        elif any(b.get(w("type")) == "page" for b in el.iter(w("br"))):
+            choices[str(i)] = (text[:40] + " " if text else "") + "[page break]"
+        elif text:
             choices[str(i)] = text[:60]
     return dict(list(choices.items())[:limit])
+
+
+def _first_heading(elements, names) -> int:
+    return next((i for i, el in enumerate(elements) if names.get(_pstyle(el) or "", "") == "heading 1"
+                 and _text(el).strip()), len(elements))
+
+
+def _captions(names: dict[str, str], body) -> dict:
+    """The template's caption styles: the ones its own captions use, else the standard names."""
+    used = Counter(_pstyle(p) for p in body.iter(w("p")) if "caption" in names.get(_pstyle(p) or "", ""))
+    candidates = [sid for sid, _ in used.most_common()] + [sid for sid, n in names.items() if "caption" in n]
+
+    def pick(*words):
+        return next((sid for sid in candidates if any(k in names[sid] for k in words)), None)
+
+    return {
+        "caption": candidates[0] if candidates else None,
+        "table_caption": _by_name(names, "table caption") or pick("table"),
+        "figure_caption": _by_name(names, "image caption") or _by_name(names, "figure caption")
+        or pick("figure", "image", "chart"),
+    }
 
 
 def _header_lines(pkg: Package, secs) -> list[str]:
@@ -127,10 +188,7 @@ def _header_lines(pkg: Package, secs) -> list[str]:
         for ref in sect.iter(w("headerReference"), w("footerReference")):
             name = "word/" + rels.get(ref.get(f"{{{R_NS}}}id"), "")
             if name in pkg.parts:
-                for p in pkg.xml(name).iter(w("p")):
-                    text = _text(p).strip()
-                    if text and text not in lines:
-                        lines.append(text)
+                lines += [t for t in _lines([pkg.xml(name)]) if t not in lines and not PAGE_NUMBER.match(t)]
     return lines
 
 

@@ -48,7 +48,7 @@ def style_names(styles: etree._Element, lower: bool = True) -> dict[str, str]:
     return out
 
 
-STYLE_KEYS = ("body", "table", "table_cell", "list", "caption", "figure_caption", "table_caption")
+STYLE_KEYS = ("body", "table", "table_cell", "list", "caption", "figure_caption", "table_caption", "quote")
 
 
 def resolve_styles(style: dict, styles: etree._Element) -> dict:
@@ -58,7 +58,9 @@ def resolve_styles(style: dict, styles: etree._Element) -> dict:
     out = dict(style)
     for key in STYLE_KEYS:
         value = out.get(key)
-        if value and value not in names:
+        # A name wins over an id: learn reports names, and a template's custom style can be named
+        # like a built-in style's id ("TableNormal").
+        if value:
             out[key] = by_name.get(value.lower(), value)
     return out
 
