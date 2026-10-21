@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 from . import __version__
@@ -71,16 +72,24 @@ def main(argv: list[str] | None = None) -> int:
     p_build.add_argument("-s", "--style", help="style JSON from `rework learn` (edited if needed)")
     p_build.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                          help="value for {KEY} in the style's cover replacements")
+    p_build.add_argument("--strict", action="store_true", help="exit with an error if there are warnings")
     p_build.add_argument("pandoc_args", nargs="*", help="extra pandoc arguments, after --")
 
     args = parser.parse_args(argv)
     if args.command == "learn":
-        json.dump(learn(args.template), sys.stdout, indent=2, ensure_ascii=False)
+        try:
+            style = learn(args.template)
+        except (FileNotFoundError, zipfile.BadZipFile, KeyError) as e:
+            return _fail(_explain(e, args.template))
+        json.dump(style, sys.stdout, indent=2, ensure_ascii=False)
         print()
         return 0
 
     if not args.output.lower().endswith(".docx"):
         parser.error(f"-o must be a .docx file, got {args.output!r}")
+    folder = os.path.dirname(os.path.abspath(args.output))
+    if not os.path.isdir(folder):
+        parser.error(f"the folder for -o does not exist: {folder}")
     bad = [item for item in args.set if "=" not in item]
     if bad:
         parser.error(f"--set needs KEY=VALUE, got {bad[0]!r}")
@@ -88,8 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         style = json.loads(Path(args.style).read_text()) if args.style else None
         warnings = build(args.source, args.template, args.output, style, values, args.pandoc_args)
-    except FileNotFoundError as e:
-        return _fail(f"no such file: {e.filename}")
+    except (FileNotFoundError, zipfile.BadZipFile, KeyError) as e:
+        return _fail(_explain(e, args.template))
     except json.JSONDecodeError as e:
         return _fail(f"{args.style} is not valid JSON: {e}")
     except subprocess.CalledProcessError:
@@ -99,7 +108,13 @@ def main(argv: list[str] | None = None) -> int:
     for warning in warnings:
         print(f"rework: warning: {warning}", file=sys.stderr)
     print(f"rework: wrote {args.output}", file=sys.stderr)
-    return 0
+    return 1 if warnings and args.strict else 0
+
+
+def _explain(error: Exception, template: str) -> str:
+    if isinstance(error, FileNotFoundError):
+        return f"no such file: {error.filename}"
+    return f"{template} is not a Word file (.docx or .dotx)"
 
 
 def _fail(message: str) -> int:

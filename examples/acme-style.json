@@ -8,15 +8,15 @@
   "cover": 11,
   "replace": [
     [
-      "\\[Report title\\]",
+      "[Report title]",
       "{title}"
     ],
     [
-      "\\[Client\\]",
+      "[Client]",
       "{client}"
     ],
     [
-      "\\[Date\\]",
+      "[Date]",
       "{date}"
     ]
   ]
