@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rework-docx"
-version = "0.3.0"
+version = "0.4.0"
 description = "Write in Markdown, deliver in your client's Word template: cover, headers, styles and numbering."
 readme = "README.md"
 license = {text = "MIT"}

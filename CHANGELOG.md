@@ -5,6 +5,28 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
+Found by the third round of customer testing on four more templates the tool had never seen.
+
+### Added
+
+- Builds warn about what wasn't carried over: front matter after the cover, a contents page (use
+  `-- --toc`), a table look the template applies by hand, and heading levels the template lacks.
+- `numbering_note` when the template numbers its headings paragraph by paragraph.
+
+### Fixed
+
+- A cover with its own Heading 1 no longer becomes the body section, which printed the report over the
+  cover and hid the title page that follows it.
+- No blank page after a full-page cover: the body's first paragraph starts the new page, and a
+  continuous body section after a cover starts on a new page.
+- Deleting a line removes its line break, and its link without a warning.
+- White text on a coloured heading band no longer triggers the white-text fix or warning.
+- Table cells no longer take a template's guidance style ("Comment"); "Normal Table" counts as no style.
+- Header fields separated by tabs are listed one by one in `header_lines`.
+- A sample table of contents is labelled in `cover_choices`, never suggested for copying.
+
 ## [0.3.0] - 2026-10-21
 
 Found by the second round of customer testing on six more templates the tool had never seen.
@@ -87,7 +109,8 @@ First release.
   the result.
 - An agent skill (`skill/SKILL.md`) for Claude Code, Codex and similar agents.
 
-[Unreleased]: https://github.com/Dinosung/REWORK/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Dinosung/REWORK/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Dinosung/REWORK/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Dinosung/REWORK/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Dinosung/REWORK/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Dinosung/REWORK/releases/tag/v0.1.0
