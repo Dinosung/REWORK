@@ -1,2 +1,2 @@
 """Put Markdown into a client's Word template, in their exact house style."""
-__version__ = "0.2.0"
+__version__ = "0.3.0"

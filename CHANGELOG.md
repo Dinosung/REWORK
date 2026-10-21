@@ -5,6 +5,33 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-21
+
+Found by the second round of customer testing on six more templates the tool had never seen.
+
+### Added
+
+- `cover_choices` runs to where the body starts and marks page and section breaks; `cover_note`
+  says when front matter continues past the cover.
+- `quote` key: block quotes use the template's Quote style. Captions use the template's own caption
+  styles, such as "Table or chart caption".
+- `heading_note` when the template's sections start below Heading 1.
+- `--strict` fails the build when there are warnings.
+
+### Fixed
+
+- The README example still used regular-expression escapes and left its cover unfilled.
+- The body always starts on a new page after the cover.
+- A table of contents heading no longer takes chapter number 1.
+- A template whose base style is white (for a dark cover) no longer gives invisible body text.
+- A style name wins over another style's id ("TableNormal").
+- A link whose text a replacement covered is removed with a warning, and unchanged links no longer warn.
+- Table captions keep with their table; a past deliverable's page numbering restarts at 1.
+- Text boxes are read once in `cover_lines`; page numbers are left out of `header_lines`.
+- The table style comes from data tables, not layout tables.
+- `learn` explains a missing or non-Word file; `-o` in a missing folder is reported as such.
+- A warning says when unfilled text lies outside the copied cover.
+
 ## [0.2.0] - 2026-10-20
 
 Found by the first round of customer testing on nine templates the tool had never seen.
@@ -60,6 +87,7 @@ First release.
   the result.
 - An agent skill (`skill/SKILL.md`) for Claude Code, Codex and similar agents.
 
-[Unreleased]: https://github.com/Dinosung/REWORK/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Dinosung/REWORK/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Dinosung/REWORK/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Dinosung/REWORK/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Dinosung/REWORK/releases/tag/v0.1.0
