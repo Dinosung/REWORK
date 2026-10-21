@@ -1,10 +1,11 @@
 # rework
 
-[![CI](https://github.com/Dinosung/rework/actions/workflows/ci.yml/badge.svg)](https://github.com/Dinosung/rework/actions/workflows/ci.yml)
+[![CI](https://github.com/Dinosung/REWORK/actions/workflows/ci.yml/badge.svg)](https://github.com/Dinosung/REWORK/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 
-**Write in Markdown. Deliver in your client's Word template, exactly.**
+**Write in Markdown. Deliver in your client's Word template: its cover, headers, styles and
+numbering, and a clear warning for anything it couldn't carry over.**
 
 `pandoc --reference-doc` borrows a template's fonts, but not the rest of its house style: the
 cover page is dropped, the header and footer come from the wrong section, the template's table
@@ -12,6 +13,8 @@ style is ignored, and pandoc points paragraphs at styles the template doesn't ha
 real company and university templates we tested, at least two of those broke.
 
 `rework` reads the template, works out its house style, and fixes the pandoc output to match.
+It has been tested against 25 real report and thesis templates, and is honest about where it stops:
+formatting a template applies by hand rather than through styles isn't copied (see [Limits](#limits)).
 
 ![The same Markdown report built with plain pandoc (left) and with rework (right) against one
 house template. Left: no cover, no header or footer, the table collapses into lines, list numbers

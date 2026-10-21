@@ -1,6 +1,6 @@
 ---
 name: rework
-description: Build a Word (.docx) deliverable from Markdown in a client's exact house style, using their template or a past deliverable. Use when asked to produce a report, proposal or document "in our template", "in the client's format" or as a branded .docx.
+description: Build a Word (.docx) deliverable from Markdown in a client's house style, using their template or a past deliverable. Use when asked to produce a report, proposal or document "in our template", "in the client's format" or as a branded .docx.
 ---
 
 # Deliver Markdown in a client's Word template
