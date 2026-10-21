@@ -11,6 +11,7 @@ import subprocess
 from lxml import etree
 
 from .fill import Filler
+from .learn import is_toc
 from .ooxml import (
     R_NS,
     W_NS,
@@ -58,10 +59,12 @@ def apply(template_path: str, pandoc_out: str, style: dict, dst: str, values: di
     out.set_xml("word/document.xml", doc)
     importer.finish()
     _fill_headers(out, doc, filler)
-    warnings += _fix_links(out, links)
+    warnings += _fix_links(out, links, [t for t, v in filler.filled.items() if not v])
     _drop_unused_parts(out, doc)
     register_content_types(out, tpl)
     out.save(dst)
+    warnings += _left_behind(tpl_body, style)
+    warnings += _borrowed_headings(doc, tpl.xml("word/styles.xml"), style_names(out.xml("word/styles.xml")))
     template_text = _text(tpl_body)
     for t in filler.unused():
         where = (f"it is in the template but outside the copied cover (\"cover\": {style.get('cover') or 0}); "
@@ -100,17 +103,73 @@ def _insert_cover(body, tpl_body, style, importer, filler, links) -> set:
         importer.remap(el)
         before = {h: _text(h) for h in el.iter(w("hyperlink")) if h.get(f"{{{R_NS}}}id")}
         changed = [p for p in el.iter(w("p")) if filler.paragraph(p)]
+        for p in changed:
+            _drop_empty_lines(p)
         links += [(h, text) for h, text in before.items() if _text(h) != text]
         # A placeholder line replaced by nothing is dropped, not left as an empty line.
         if el.tag == w("p") and el in changed and not _text(el).strip() and not _has_drawing(el):
             continue
         cover.append(el)
-    # The body starts on a new page even when the template's page break came after the copied part.
-    if cover and not _ends_page(cover[-1]):
-        cover.append(etree.fromstring(f'<w:p xmlns:w="{W_NS}"><w:r><w:br w:type="page"/></w:r></w:p>'))
     for i, el in enumerate(cover):
         body.insert(i, el)
+    if cover:
+        # The first paragraph or table after the cover (pandoc 3.1 puts bookmark markers in between).
+        first = next((el for el in list(body)[len(cover):] if el.tag in (w("p"), w("tbl"))), None)
+        _new_page_after(cover[-1], first, body)
     return {node for el in cover for node in el.iter()}
+
+
+def _new_page_after(last, first, body) -> None:
+    """The body starts on a new page, even when the template's page break came after the copied part.
+
+    If the cover ends in a section break, the body section is made to start on a new page (see
+    _use_body_section); otherwise the body's first paragraph gets "page break before" (a separate
+    break paragraph can spill onto a page of its own after a full-page cover).
+    """
+    if _ends_page(last):
+        return
+    if first is not None and first.tag == w("p"):
+        ppr = first.find(w("pPr"))
+        if ppr is None:
+            ppr = etree.Element(w("pPr"))
+            first.insert(0, ppr)
+        if ppr.find(w("pageBreakBefore")) is None:
+            before = [c for c in ppr if etree.QName(c).localname in ("pStyle", "keepNext", "keepLines")]
+            ppr.insert(ppr.index(before[-1]) + 1 if before else 0, etree.Element(w("pageBreakBefore")))
+    else:
+        body.insert(body.index(last) + 1,
+                    etree.fromstring(f'<w:p xmlns:w="{W_NS}"><w:r><w:br w:type="page"/></w:r></w:p>'))
+
+
+def _borrowed_headings(doc, tpl_styles, names) -> list[str]:
+    """Heading levels the template doesn't define come in with pandoc's look; say so."""
+    own = set(style_names(tpl_styles).values())
+    used = {names.get(ps.get(w("val")), "") for ps in doc.iter(w("pStyle"))}
+    lacking = sorted(n for n in used if n.startswith("heading ") and n not in own)
+    if not lacking:
+        return []
+    return [f"the template has no {', '.join(n.title() for n in lacking)} style, so pandoc's default look was "
+            "used; use fewer heading levels, or pass -- --shift-heading-level-by if the levels are offset"]
+
+
+def _left_behind(tpl_body, style) -> list[str]:
+    """What the template has that the output doesn't, so a clean build isn't mistaken for a finished one."""
+    notes = []
+    elements, cover = list(tpl_body), style.get("cover") or 0
+    front = elements[cover:style.get("front_end") or cover]
+    # A sample table of contents lists the template's headings, not yours: never suggest copying it.
+    rest = [t for t in (_text(el).strip() for el in front if not is_toc(el)) if t]
+    if cover and rest:
+        notes.append(f"the template's front matter continues after the cover ({len(rest)} more lines, from "
+                     f"{rest[0][:40]!r}); raise \"cover\" to a value from cover_choices (rework learn) to copy it")
+    if any(is_toc(el) for el in front):
+        notes.append("the template has a table of contents after the cover; pass -- --toc for one listing your "
+                     "headings (Word fills it in when fields are updated)")
+    tables = [t for t in tpl_body.iter(w("tbl")) if len(t.findall(w("tr"))) >= 2]
+    if tables and not style.get("table"):
+        notes.append("the template's tables have no table style (they are formatted by hand), "
+                     "so yours use pandoc's plain table look")
+    return notes
 
 
 def _ends_page(el) -> bool:
@@ -148,15 +207,23 @@ def _visible_body(body, styles, skip: set) -> list[str]:
     default = next((s.get(w("styleId")) for s in styles.iter(w("style"))
                     if s.get(w("type")) == "paragraph" and s.get(w("default")) in ("1", "true")), None)
 
-    def color(sid, seen=()):
+    def find(sid, path, seen=()):
         s = by_id.get(sid)
         if s is None or sid in seen:
             return None
-        c = s.find(f"{w('rPr')}/{w('color')}")
-        if c is not None:
-            return (c.get(w("val")) or "").upper()
+        found = s.find(path)
+        if found is not None:
+            return found
         based = s.find(w("basedOn"))
-        return color(based.get(w("val")), (*seen, sid)) if based is not None else None
+        return find(based.get(w("val")), path, (*seen, sid)) if based is not None else None
+
+    def color(sid):
+        c = find(sid, f"{w('rPr')}/{w('color')}")
+        return (c.get(w("val")) or "").upper() if c is not None else None
+
+    def on_band(sid):  # white text on a coloured paragraph fill (a heading bar) is meant to be white
+        shd = find(sid, f"{w('pPr')}/{w('shd')}")
+        return shd is not None and (shd.get(w("fill")) or "auto").upper() not in ("AUTO", "FFFFFF")
 
     fixed = set()
     for p in body.iter(w("p")):
@@ -164,7 +231,7 @@ def _visible_body(body, styles, skip: set) -> list[str]:
             continue
         ps = _pstyle(p)
         sid = ps.get(w("val")) if ps is not None else default
-        if color(sid) not in WHITE:
+        if color(sid) not in WHITE or on_band(sid):
             continue
         for r in p.iter(w("r")):
             rpr = r.find(w("rPr"))
@@ -180,6 +247,24 @@ def _visible_body(body, styles, skip: set) -> list[str]:
         fixed.add(sid)
     return [f"the template's {', '.join(sorted(fixed))} style is white text (probably for a dark cover); "
             "body text was given automatic colour, as on the template's own pages"] if fixed else []
+
+
+def _drop_empty_lines(p) -> None:
+    """Remove line breaks left around a line that a replacement emptied ("Phone: ...<br/>" -> "")."""
+    pending, seen_text = [], False
+    for node in list(p.iter(w("t"), w("br"))):
+        if node.tag == w("t"):
+            if node.text:
+                pending, seen_text = [], True
+            continue
+        if node.get(w("type")) not in (None, "textWrapping"):
+            continue  # page and column breaks stay
+        if not seen_text or pending:
+            node.getparent().remove(node)  # a break before any text, or right after another break
+        else:
+            pending.append(node)
+    for node in pending:
+        node.getparent().remove(node)  # trailing breaks
 
 
 def _text(el) -> str:
@@ -201,7 +286,7 @@ def _fill_headers(out: Package, doc, filler) -> None:
                 out.set_xml(name, part)
 
 
-def _fix_links(out: Package, links) -> list[str]:
+def _fix_links(out: Package, links, deleted: list[str]) -> list[str]:
     """Cover links whose text was filled in: a new email address gets a matching mailto target."""
     rels = out.xml("word/_rels/document.xml.rels")
     by_id = {r.get("Id"): r for r in rels}
@@ -211,8 +296,9 @@ def _fix_links(out: Package, links) -> list[str]:
         text = _text(link).strip()
         if not text:
             link.getparent().remove(link)
-            warnings.append(f"the link on {before!r} was removed because a replacement covered its text; "
-                            "replace only the text outside the link")
+            if not any(before.strip() and before.strip() in gone for gone in deleted):  # deleting it was the point
+                warnings.append(f"the link on {before!r} was removed because a replacement covered its text; "
+                                "replace only the text outside the link")
         elif rel is None or rel.get("TargetMode") != "External":
             continue
         elif rel.get("Target", "").startswith("mailto:") and EMAIL.fullmatch(text):
@@ -266,6 +352,10 @@ def _use_body_section(body, tpl_body, style, importer):
         el.set(w("type"), kind)
         el.set(f"{{{R_NS}}}id", rid)
         new.insert(i, el)
+    # After a cover, the body section starts on a new page, not "continuous" on the cover's page.
+    kind = new.find(w("type"))
+    if style.get("cover") and kind is not None and kind.get(w("val")) == "continuous":
+        kind.set(w("val"), "nextPage")
     # A past deliverable may restart page numbers mid-thesis ("start at 26"); start at 1 instead.
     pg = new.find(w("pgNumType"))
     if pg is not None and pg.get(w("start")) not in (None, "0", "1"):

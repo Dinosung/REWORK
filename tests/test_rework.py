@@ -7,6 +7,7 @@ import pytest
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.text import WD_BREAK
 from docx.opc.constants import RELATIONSHIP_TYPE
 from docx.shared import Pt, RGBColor
 from lxml import etree
@@ -391,8 +392,24 @@ def test_the_body_starts_on_a_new_page_after_the_cover(files):
     style = learn(str(tpl))
     style["cover"] = 3  # the three cover lines, without the section break that ends the page
     build(str(md), str(tpl), str(out), style)
-    fourth = list(read(out, "word/document.xml").find(w("body")))[3]
-    assert any(b.get(w("type")) == "page" for b in fourth.iter(w("br")))
+    after = [el for el in list(read(out, "word/document.xml").find(w("body")))[3:] if el.tag == w("p")]
+    assert after[0].find(f"{w('pPr')}/{w('pageBreakBefore')}") is not None
+
+
+def test_a_continuous_break_after_the_cover_becomes_a_new_page(tmp_path):
+    doc = Document()
+    doc.add_paragraph("Cover title")
+    doc.add_section(WD_SECTION.CONTINUOUS)
+    doc.add_heading("Introduction", level=1)
+    doc.add_paragraph("Body " * 50)
+    tpl, md, out = tmp_path / "t.docx", tmp_path / "r.md", tmp_path / "out.docx"
+    doc.save(tpl)
+    md.write_text("# One\n\nText.\n")
+    style = learn(str(tpl))
+    assert style["cover"] == 2
+    build(str(md), str(tpl), str(out), style)
+    final = read(out, "word/document.xml").find(f"{w('body')}/{w('sectPr')}/{w('type')}")
+    assert final is None or final.get(w("val")) != "continuous"
 
 
 def test_contents_heading_is_never_numbered(files):
@@ -422,9 +439,10 @@ def test_links_are_kept_unless_a_replacement_covers_them(fields):
     tpl, md, out, style = fields
     warnings = build(str(md), str(tpl), str(out), style, {"email": "sam@firm.example"})
     assert not any("link" in warning for warning in warnings)  # a correct link raises nothing
-    style["replace"] = [["Date: [Report Date]", "x"], ["<EMAIL>", ""]]
+    style["replace"] = [["Date: [Report Date]", "x"], ["<EMAIL>", ""]]  # deleting the line deletes its link
     warnings = build(str(md), str(tpl), str(out), style)
-    assert any("link on '<EMAIL>' was removed" in warning for warning in warnings)
+    assert not any("link" in warning for warning in warnings)
+    assert "<EMAIL>" not in "".join(paragraphs(out))
 
 
 def test_captions_quotes_and_strict(tmp_path, capsys):
@@ -467,3 +485,67 @@ def test_cover_choices_show_breaks(tmp_path):
     doc.save(path)
     choices = learn(str(path))["cover_choices"]
     assert "[page break]" in choices["3"] and choices["4"] == "Copyright 2026"
+
+
+def test_deleting_a_line_removes_its_line_break(tmp_path):
+    doc = Document()
+    p = doc.add_paragraph("Assessor: [Name]")
+    for line in ("Phone: 123", "Email: a@b.example"):
+        p.add_run().add_break()
+        p.add_run(line)
+    doc.add_page_break()
+    doc.add_heading("Introduction", level=1)
+    tpl, md, out = tmp_path / "t.docx", tmp_path / "r.md", tmp_path / "out.docx"
+    doc.save(tpl)
+    md.write_text("Text.\n")
+    style = learn(str(tpl))
+    style["replace"] = [["[Name]", "Sam"], ["Phone: 123", ""], ["Email: a@b.example", ""]]
+    build(str(md), str(tpl), str(out), style)
+    first = next(read(out, "word/document.xml").iter(w("p")))
+    assert not [b for b in first.iter(w("br")) if b.get(w("type")) is None]
+
+
+def test_learn_flags_headings_numbered_by_hand_and_ignores_normal_table(tmp_path):
+    doc = Document()
+    h = doc.add_heading("Executive Summary", level=1)
+    num = etree.SubElement(h._p.get_or_add_pPr(), w("numPr"))
+    etree.SubElement(num, w("numId")).set(w("val"), "1")
+    table = doc.add_table(rows=2, cols=2)
+    table.style = doc.styles["Normal Table"]
+    path = tmp_path / "t.docx"
+    doc.save(path)
+    style = learn(str(path))
+    assert "numbering_note" in style and style["table"] is None
+
+
+def test_missing_heading_levels_are_reported(tmp_path):
+    doc = Document()
+    for level in range(2, 10):  # a template with only Heading 1
+        style = doc.styles[f"Heading {level}"]._element
+        style.getparent().remove(style)
+    doc.add_heading("Section", level=1)
+    tpl, md, out = tmp_path / "t.docx", tmp_path / "h.md", tmp_path / "out.docx"
+    doc.save(tpl)
+    md.write_text("# One\n\n#### Four\n\nText.\n")
+    warnings = build(str(md), str(tpl), str(out))
+    assert any("Heading 4" in warning for warning in warnings)
+
+
+def test_a_sample_contents_page_is_never_offered_for_copying(tmp_path):
+    doc = Document()
+    doc.add_paragraph("Report title")
+    doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+    toc = etree.fromstring(
+        f'<w:sdt xmlns:w="{W_NS}"><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/>'
+        '</w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:r><w:t>1 Sample heading</w:t></w:r></w:p>'
+        "</w:sdtContent></w:sdt>")
+    doc.element.body.insert(len(doc.element.body) - 1, toc)
+    doc.add_heading("Introduction", level=1)
+    tpl, md, out = tmp_path / "t.docx", tmp_path / "r.md", tmp_path / "out.docx"
+    doc.save(tpl)
+    md.write_text("Text.\n")
+    style = learn(str(tpl))
+    style["cover"] = 2
+    warnings = build(str(md), str(tpl), str(out), style)
+    assert any("--toc" in warning for warning in warnings)
+    assert not any("front matter continues" in warning for warning in warnings)

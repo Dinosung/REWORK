@@ -28,6 +28,8 @@ def build(source: str, template: str, output: str, style: dict | None = None,
           values: dict | None = None, pandoc_args: list[str] | None = None) -> list[str]:
     """Markdown (or anything pandoc reads) -> .docx in the template's style. Returns warnings."""
     style = style or learn(template)
+    if "front_end" not in style:
+        style = {**style, "front_end": learn(template)["front_end"]}
     with tempfile.TemporaryDirectory() as tmp:
         raw = os.path.join(tmp, "pandoc.docx")
         mark = os.path.join(tmp, "unnumbered.lua")
